@@ -11,16 +11,15 @@ from note_seq.sequences_lib import (
     transpose_note_sequence,
     apply_sustain_control_changes,
 )
-
+from note_seq import PerformanceOneHotEncoding
 
 class MidiEncoder:
    
     def __init__(self, steps_per_second, num_velocity_bins, min_pitch, max_pitch):
         self._steps_per_second = steps_per_second
         self._num_velocity_bins = num_velocity_bins
-        self._encoding = note_seq.PerformanceOneHotEncoding(
+        self._encoding = PerformanceOneHotEncoding(
             num_velocity_bins=num_velocity_bins,
-            max_shift_steps=steps_per_second,
             min_pitch=min_pitch,
             max_pitch=max_pitch
         )
@@ -42,11 +41,17 @@ class MidiEncoder:
                      self.num_reserved_ids
                      for event in performance]
 
+        assert(max(event_ids) < self.vocab_size)
+        assert(min(event_ids) >= 0)
+
         return event_ids
 
 
     def decode_ids(self, ids):
         event_ids = []
+
+        assert(max(ids) < self.vocab_size)
+        assert(min(ids) >= 0)
 
         performance = note_seq.Performance(
             quantized_sequence=None,
