@@ -15,7 +15,7 @@ from progress.bar import Bar
 
 
 class MusicTransformer(torch.nn.Module):
-    def __init__(self, embedding_dim=256, vocab_size=388+2, num_layer=6,
+    def __init__(self, embedding_dim, vocab_size, num_layer,
                  max_seq=2048, dropout=0.2, debug=False, loader_path=None, dist=False, writer=None):
         super().__init__()
         self.infer = False
@@ -37,7 +37,7 @@ class MusicTransformer(torch.nn.Module):
 
     def forward(self, x, length=None, writer=None):
         if self.training or not self.infer:
-            _, _, look_ahead_mask = utils.get_masked_with_pad_tensor(self.max_seq, x, x, config.pad_token)
+            _, _, look_ahead_mask = utils.get_masked_with_pad_tensor(self.max_seq, x, x, 0)
             decoder, w = self.Decoder(x, mask=look_ahead_mask)
             fc = self.fc(decoder)
             return fc.contiguous() if self.training else (fc.contiguous(), [weight.contiguous() for weight in w])

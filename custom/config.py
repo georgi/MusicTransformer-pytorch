@@ -89,10 +89,9 @@ class MusicTransformerConfig(Config):
         self._set_vocab_params()
 
     def _set_vocab_params(self):
-        self.pad_token = self.event_dim
-        self.token_sos = self.event_dim + 1
-        self.token_eos = self.event_dim + 2
-        self.vocab_size = self.event_dim + 3
+        self.pad_token = 0
+        self.token_sos = 1
+        self.token_eos = 2
 
 
 config = MusicTransformerConfig('save.yml')

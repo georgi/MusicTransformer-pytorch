@@ -1,37 +1,93 @@
-import pickle
+import utils
 import os
 import sys
-from progress.bar import Bar
-import utils
-from midi_processor.processor import encode_midi
+import pickle
+import note_seq
+from note_seq.midi_io import midi_to_note_sequence
+import pretty_midi
+from note_seq.sequences_lib import (
+    quantize_note_sequence_absolute,
+    stretch_note_sequence,
+    transpose_note_sequence,
+    apply_sustain_control_changes,
+)
 
 
-def preprocess_midi(path):
-    return encode_midi(path)
+class MidiEncoder:
+   
+    def __init__(self, steps_per_second, num_velocity_bins, min_pitch, max_pitch):
+        self._steps_per_second = steps_per_second
+        self._num_velocity_bins = num_velocity_bins
+        self._encoding = note_seq.PerformanceOneHotEncoding(
+            num_velocity_bins=num_velocity_bins,
+            max_shift_steps=steps_per_second,
+            min_pitch=min_pitch,
+            max_pitch=max_pitch
+        )
+        self.num_reserved_ids = 3
+        self.vocab_size = self._encoding.num_classes + self.num_reserved_ids + 1
+        self.token_pad = 0
+        self.token_sos = 1
+        self.token_eos = 2
+
+    def encode_note_sequence(self, ns):
+        performance = note_seq.Performance(
+            note_seq.quantize_note_sequence_absolute(
+                ns, 
+                self._steps_per_second),
+                num_velocity_bins=self._num_velocity_bins
+            )
+
+        event_ids = [self._encoding.encode_event(event) + 
+                     self.num_reserved_ids
+                     for event in performance]
+
+        return event_ids
 
 
-def preprocess_midi_files_under(midi_root, save_dir):
-    midi_paths = list(utils.find_files_by_extensions(midi_root, ['.mid', '.midi']))
-    os.makedirs(save_dir, exist_ok=True)
-    out_fmt = '{}-{}.data'
+    def decode_ids(self, ids):
+        event_ids = []
 
-    for path in Bar('Processing').iter(midi_paths):
-        print(' ', end='[{}]'.format(path), flush=True)
+        performance = note_seq.Performance(
+            quantized_sequence=None,
+            steps_per_second=self._steps_per_second,
+            num_velocity_bins=self._num_velocity_bins
+        )
+        for i in event_ids:
+            if i >= self.num_reserved_ids:
+                performance.append(self._encoding.decode_event(i - self.num_reserved_ids))
 
-        try:
-            data = preprocess_midi(path)
-        except KeyboardInterrupt:
-            print(' Abort')
-            return
-        except EOFError:
-            print('EOF Error')
-            return
+        return performance.to_sequence()
 
-        with open('{}/{}.pickle'.format(save_dir, path.split('/')[-1]), 'wb') as f:
-            pickle.dump(data, f)
+
+def convert_midi_to_proto(path, dest_dir):
+    midi = pretty_midi.PrettyMIDI(path)
+    for i, inst in enumerate(midi.instruments):
+        num_distinct_pitches = sum([i > 5 for i in inst.get_pitch_class_histogram()])
+        if inst.is_drum or num_distinct_pitches < 5 or len(inst.notes) < 30:
+            midi.instruments.remove(inst)
+    ns = midi_to_note_sequence(midi)
+    ns = apply_sustain_control_changes(ns)
+    del ns.control_changes[:]
+    out_file = os.path.join(dest_dir, os.path.basename(path)) + '.pb'
+    with open(out_file, 'wb') as f:
+        f.write(ns.SerializeToString())
+        
+
 
 
 if __name__ == '__main__':
-    preprocess_midi_files_under(
-            midi_root=sys.argv[1],
-            save_dir=sys.argv[2])
+    midi_root = sys.argv[1]
+    data_dir = sys.argv[2]  
+    midi_paths = list(find_files_by_extensions(midi_root, ['.mid', '.midi']))
+    os.makedirs(data_dir, exist_ok=True)
+
+    for file in os.listdir(data_dir):
+        os.unlink(os.path.join(data_dir, file))
+
+    # Convert all MIDI files into internal format
+    for path in midi_paths:
+        try:
+            preprocess.convert_midi_to_proto(path, data_dir)
+        except Exception as e:
+            print(e)
