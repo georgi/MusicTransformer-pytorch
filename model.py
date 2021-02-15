@@ -25,6 +25,52 @@ class PositionalEncoding(nn.Module):
         return self.dropout(x)
 
 
+class TransformerModel(nn.Module):
+
+    def __init__(
+        self, 
+        vocab_size, 
+        sequence_len,
+        d_model, 
+        dim_feedforward, 
+        nhead, 
+        num_layers, 
+        dropout
+    ):
+        super(TransformerModel, self).__init__()
+        self.model_type = 'Transformer'
+        self.embedding = nn.Embedding(vocab_size, d_model)
+        self.pos_encoder = PositionalEncoding(d_model, dropout, sequence_len)
+        self.transformer = nn.Transformer(
+            d_model=d_model, 
+            nhead=nhead, 
+            num_encoder_layers=num_layers,
+            num_decoder_layers=0, 
+            dropout=dropout,
+            dim_feedforward=dim_feedforward, 
+            custom_decoder=DummyDecoder()
+        )
+        self.decoder = nn.Linear(d_model, vocab_size)
+        self.init_weights()
+
+    def gen_mask(self, size):
+        return self.transformer.generate_square_subsequent_mask(size)
+
+    def init_weights(self):
+        initrange = 0.1
+        self.decoder.bias.data.zero_()
+        self.decoder.weight.data.uniform_(-initrange, initrange)
+
+    def forward(self, src, src_mask):
+        src = self.embedding(src)
+        src = src.permute(1, 0, 2) # (max_seq, batch_size, d_model)
+        src = self.pos_encoder(src)
+        out = self.transformer(src=src, tgt=src, src_mask=src_mask)
+        out = out.permute(1, 0, 2) # (batch_size, max_seq, d_model)
+        out = self.decoder(out)
+        return out
+
+
 # MusicTransformer
 class MusicTransformer(nn.Module):
     """
@@ -41,8 +87,18 @@ class MusicTransformer(nn.Module):
     ----------
     """
 
-    def __init__(self, vocab_size, n_layers=6, num_heads=8, d_model=512, dim_feedforward=1024,
-                 dropout=0.1, max_sequence=2048, rpr=False, token_pad=0, token_end=2):
+    def __init__(self, 
+        vocab_size, 
+        n_layers=6, 
+        num_heads=8, 
+        d_model=512, 
+        dim_feedforward=1024,
+        dropout=0.1, 
+        max_sequence=2048, 
+        rpr=False, 
+        token_pad=0, 
+        token_end=2
+    ):
         super(MusicTransformer, self).__init__()
 
         self.dummy      = DummyDecoder()
@@ -68,9 +124,13 @@ class MusicTransformer(nn.Module):
             # To make a decoder-only transformer we need to use masked encoder layers
             # Dummy decoder to essentially just return the encoder output
             self.transformer = nn.Transformer(
-                d_model=self.d_model, nhead=self.nhead, num_encoder_layers=self.nlayers,
-                num_decoder_layers=0, dropout=self.dropout, # activation=self.ff_activ,
-                dim_feedforward=self.d_ff, custom_decoder=self.dummy
+                d_model=self.d_model, 
+                nhead=self.nhead, 
+                num_encoder_layers=self.nlayers,
+                num_decoder_layers=0, 
+                dropout=self.dropout, # activation=self.ff_activ,
+                dim_feedforward=self.d_ff, 
+                custom_decoder=self.dummy
             )
         # RPR Transformer
         else:

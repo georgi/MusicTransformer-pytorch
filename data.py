@@ -4,12 +4,55 @@ import numpy as np
 import torch
 from random import randrange, gauss
 import note_seq
+from concurrent.futures import ThreadPoolExecutor
 from tqdm.notebook import tqdm
 from note_seq.sequences_lib import (
     stretch_note_sequence, 
     transpose_note_sequence,
     NegativeTimeError
 )
+
+
+def process_midi(raw_mid, max_seq, random_seq, token_pad=0, token_end=2):
+    """
+    ----------
+    Author: Damon Gwinn
+    ----------
+    Takes in pre-processed raw midi and returns the input and target. Can use a random sequence or
+    go from the start based on random_seq.
+    ----------
+    """
+
+    x   = torch.full((max_seq, ), token_pad, dtype=torch.long)
+    tgt = torch.full((max_seq, ), token_pad, dtype=torch.long)
+
+    raw_len     = len(raw_mid)
+    full_seq    = max_seq + 1 # Performing seq2seq
+
+    if raw_len == 0:
+        return x, tgt
+
+    if raw_len < full_seq:
+        x[:raw_len]     = raw_mid
+        tgt[:raw_len-1] = raw_mid[1:]
+        tgt[raw_len]    = token_end
+    else:
+        if random_seq:
+            end_range = raw_len - full_seq
+            start = random.randint(0, end_range)
+        else:
+            start = 0
+
+        end = start + full_seq
+        data = raw_mid[start:end]
+        x = data[:max_seq]
+        tgt = data[1:full_seq]
+
+
+    # print("x:",x)
+    # print("tgt:",tgt)
+
+    return x, tgt
         
 def train_test_split(dataset, split=0.90):
     train = list()
@@ -21,15 +64,18 @@ def train_test_split(dataset, split=0.90):
     return train, dataset_copy
 
 
+def load_sequence(fname):
+    with open(fname, 'rb') as f:
+        ns = note_seq.NoteSequence()
+        ns.ParseFromString(f.read())
+        return ns
+
+
 def load_seq_files(folder):
-    res = []
-    files = tqdm(list(utils.find_files_by_extensions(folder, ['.pb'])))
-    for fname in files:
-        with open(fname, 'rb') as f:
-            ns = note_seq.NoteSequence()
-            ns.ParseFromString(f.read())
-            res.append(ns)
-    return res
+    files = list(utils.find_files_by_extensions(folder, ['.pb']))
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = [executor.submit(load_sequence, f) for f in files]
+        return [future.result() for future in tqdm(futures)]
 
 
 class SequenceDataset(torch.utils.data.Dataset):
@@ -72,16 +118,11 @@ class SequenceDataset(torch.utils.data.Dataset):
         return self._get_seq(self.sequences[idx])
 
     def _get_seq(self, ns):
-        data = np.array(self.encode(self.augment(ns)))
-            
-        if len(data) > self.seq_length:
-            start = random.randrange(0, len(data) - self.seq_length)
-            data = data[start:start + self.seq_length]
-        elif len(data) < self.seq_length:
-            data = np.append(data, self.midi_encoder.token_eos)
-            while len(data) < self.seq_length:
-                data = np.append(data, self.midi_encoder.token_pad)
-
-        assert(len(data) == self.seq_length)
-
+        data = torch.tensor(self.encode(self.augment(ns)))
+        data = process_midi(data, 
+            self.seq_length, 
+            True, 
+            self.midi_encoder.token_pad, 
+            self.midi_encoder.token_eos
+        )
         return data
