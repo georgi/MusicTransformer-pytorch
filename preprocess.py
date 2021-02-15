@@ -15,8 +15,9 @@ from note_seq import PerformanceOneHotEncoding
 
 class MidiEncoder:
    
-    def __init__(self, steps_per_second, num_velocity_bins, min_pitch, max_pitch):
+    def __init__(self, num_velocity_bins, min_pitch, max_pitch, steps_per_quarter=None, steps_per_second=None):
         self._steps_per_second = steps_per_second
+        self._steps_per_quarter = steps_per_quarter
         self._num_velocity_bins = num_velocity_bins
         self._encoding = PerformanceOneHotEncoding(
             num_velocity_bins=num_velocity_bins,
@@ -30,35 +31,47 @@ class MidiEncoder:
         self.token_eos = 2
 
     def encode_note_sequence(self, ns):
-        performance = note_seq.Performance(
-            note_seq.quantize_note_sequence_absolute(
-                ns, 
-                self._steps_per_second),
-                num_velocity_bins=self._num_velocity_bins
+        if self._steps_per_quarter:
+            performance = note_seq.MetricPerformance(
+                note_seq.quantize_note_sequence(ns, self._steps_per_quarter),
+                num_velocity_bins=self._num_velocity_bins,
             )
+        else:
+            performance = note_seq.Performance(
+                note_seq.quantize_note_sequence_absolute(
+                    ns, 
+                    self._steps_per_second),
+                    num_velocity_bins=self._num_velocity_bins
+                )
 
         event_ids = [self._encoding.encode_event(event) + 
                      self.num_reserved_ids
                      for event in performance]
 
+        event_ids = [i for i in event_ids if i > 0]
+
         assert(max(event_ids) < self.vocab_size)
         assert(min(event_ids) >= 0)
 
-        return event_ids
+        return [self.token_sos] + event_ids
 
 
     def decode_ids(self, ids):
-        event_ids = []
-
         assert(max(ids) < self.vocab_size)
         assert(min(ids) >= 0)
 
-        performance = note_seq.Performance(
-            quantized_sequence=None,
-            steps_per_second=self._steps_per_second,
-            num_velocity_bins=self._num_velocity_bins
-        )
-        for i in event_ids:
+        if self._steps_per_quarter:
+            performance = note_seq.MetricPerformance(
+                steps_per_quarter=self._steps_per_quarter,
+                num_velocity_bins=self._num_velocity_bins
+            )
+        else:
+            performance = note_seq.Performance(
+                steps_per_second=self._steps_per_second,
+                num_velocity_bins=self._num_velocity_bins
+            )
+
+        for i in ids:
             if i >= self.num_reserved_ids:
                 performance.append(self._encoding.decode_event(i - self.num_reserved_ids))
 

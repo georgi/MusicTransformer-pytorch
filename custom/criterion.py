@@ -68,14 +68,14 @@ class SmoothCrossEntropyLoss(_Loss):
 
 
 class CustomSchedule:
-    def __init__(self, d_model, warmup_steps=4000, optimizer=None):
+    def __init__(self, d_model, start = 0, warmup_steps=4000, optimizer=None):
         super(CustomSchedule, self).__init__()
 
         self.d_model = d_model
         self.optimizer = optimizer
         self.warmup_steps = warmup_steps
 
-        self._step = 0
+        self._step = start
         self._rate = 0
 
     def step(self):

@@ -1,7 +1,10 @@
 import random
+import utils
 import numpy as np
+import torch
 from random import randrange, gauss
 import note_seq
+from tqdm.notebook import tqdm
 from note_seq.sequences_lib import (
     stretch_note_sequence, 
     transpose_note_sequence,
@@ -18,8 +21,9 @@ def train_test_split(dataset, split=0.90):
     return train, dataset_copy
 
 
-def load_seq_files(files):
+def load_seq_files(folder):
     res = []
+    files = tqdm(list(utils.find_files_by_extensions(folder, ['.pb'])))
     for fname in files:
         with open(fname, 'rb') as f:
             ns = note_seq.NoteSequence()
@@ -28,54 +32,56 @@ def load_seq_files(files):
     return res
 
 
-class Data:
-    def __init__(self, sequences, midi_encoder):
+class SequenceDataset(torch.utils.data.Dataset):
+    def __init__(self, sequences, seq_length, midi_encoder, time_augment, transpose_augment):
         self.sequences = sequences
+        self.seq_length = seq_length
         self.midi_encoder = midi_encoder
+        self.time_augment = time_augment
+        self.transpose_augment = transpose_augment
         
     def __len__(self):
-        return sum(len(s) for s in self.sequences.values()) 
+        return len(self.sequences)
 
-    def batch(self, batch_size, length, mode='train'):
-        batch_data = [
-            self._get_seq(seq, length, mode)
-            for seq in random.sample(self.sequences[mode], k=batch_size)
-        ]
-        return np.array(batch_data)  # batch_size, seq_len
-
-    def slide_seq2seq_batch(self, batch_size, length, mode='train'):
-        data = self.batch(batch_size, length + 1, mode)
-        assert(data.shape == (batch_size, length + 1))
-        x = data[:, :-1]
-        y = data[:, 1:]
-        return x, y
+    # def batch(self, batch_size, length, mode='train'):
+    #     batch_data = [
+    #         self._get_seq(seq, length, mode)
+    #         for seq in random.sample(self.sequences[mode], k=batch_size)
+    #     ]
+    #     return np.array(batch_data)  # batch_size, seq_len
     
     def augment(self, ns):
-        stretch_factor = gauss(1.0, 0.5)
-        velocity_factor = gauss(1.0, 0.2)
-        transpose = randrange(-5, 7)
-        ns = stretch_note_sequence(ns, stretch_factor)
-        for note in ns.notes:
-            note.velocity = max(1, min(127, int(note.velocity * velocity_factor)))
-        return transpose_note_sequence(ns, transpose, in_place=True)[0]
-
-    def _get_seq(self, ns, max_length, mode):
-        if mode == 'train':
+        if self.transpose_augment > 0:
+            transpose = randrange(-self.transpose_augment, self.transpose_augment)
+            ns = transpose_note_sequence(ns, transpose)[0]
+        if self.time_augment > 0:
             try:
-                data = self.midi_encoder.encode_note_sequence(self.augment(ns))
+                stretch_factor = gauss(1.0, self.time_augment)
+                ns = stretch_note_sequence(ns, stretch_factor)
             except NegativeTimeError:
-                data = self.midi_encoder.encode_note_sequence(ns)
-        else:
-            data = self.midi_encoder.encode_note_sequence(ns)
+                pass
+        # velocity_factor = gauss(1.0, 0.2)
+        # for note in ns.notes:
+        #     note.velocity = max(1, min(127, int(note.velocity * velocity_factor)))
+        return ns
+
+    def encode(self, ns):
+        return self.midi_encoder.encode_note_sequence(ns)
+
+    def __getitem__(self, idx):
+        return self._get_seq(self.sequences[idx])
+
+    def _get_seq(self, ns):
+        data = np.array(self.encode(self.augment(ns)))
             
-        if len(data) > max_length:
-            start = random.randrange(0, len(data) - max_length)
-            data = data[start:start + max_length]
-        elif len(data) < max_length:
+        if len(data) > self.seq_length:
+            start = random.randrange(0, len(data) - self.seq_length)
+            data = data[start:start + self.seq_length]
+        elif len(data) < self.seq_length:
             data = np.append(data, self.midi_encoder.token_eos)
-            while len(data) < max_length:
+            while len(data) < self.seq_length:
                 data = np.append(data, self.midi_encoder.token_pad)
 
-        assert(len(data) == max_length)
+        assert(len(data) == self.seq_length)
 
         return data
