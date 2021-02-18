@@ -78,6 +78,44 @@ def load_seq_files(folder):
         return [future.result() for future in tqdm(futures)]
 
 
+def data_loaders(midi_encoder, data_dir, batch_size, steps_per_quarter):
+    print("Load sequence files from ", data_dir)
+    data_files = data.load_seq_files(data_dir)
+    train_files, valid_files = data.train_test_split(data_files)
+
+    def quantize(seqs):
+        res = []
+        for ns in seqs:
+            try:
+                res.append(note_seq.quantize_note_sequence(ns, steps_per_quarter))
+            except note_seq.MultipleTimeSignatureError:
+                pass
+            except note_seq.MultipleTempoError:
+                pass
+        return res
+
+    train_data = data.SequenceDataset(
+        sequences=quantize(train_files),
+        seq_length=max_seq,
+        midi_encoder=midi_encoder,
+        time_augment=0,
+        transpose_augment=12
+    )
+    valid_data = data.SequenceDataset(
+        sequences=quantize(valid_files),
+        seq_length=max_seq,
+        midi_encoder=midi_encoder,
+        time_augment=0,
+        transpose_augment=0
+    )
+
+    train_loader = DataLoader(train_data, batch_size, num_workers=8)
+    valid_loader = DataLoader(valid_data, batch_size, num_workers=8)
+
+    return train_loader, valid_loader
+
+
+
 class SequenceDataset(torch.utils.data.Dataset):
     def __init__(self, sequences, seq_length, midi_encoder, time_augment, transpose_augment):
         self.sequences = sequences

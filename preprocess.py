@@ -12,6 +12,9 @@ from note_seq.sequences_lib import (
     apply_sustain_control_changes,
 )
 from note_seq import PerformanceOneHotEncoding
+from utils import find_files_by_extensions
+from tqdm.notebook import tqdm
+from concurrent.futures import ThreadPoolExecutor
 
 class MidiEncoder:
    
@@ -81,8 +84,8 @@ class MidiEncoder:
 def convert_midi_to_proto(path, dest_dir):
     midi = pretty_midi.PrettyMIDI(path)
     for i, inst in enumerate(midi.instruments):
-        num_distinct_pitches = sum([i > 5 for i in inst.get_pitch_class_histogram()])
-        if inst.is_drum or num_distinct_pitches < 5 or len(inst.notes) < 30:
+        num_distinct_pitches = sum([i > 1 for i in inst.get_pitch_class_histogram()])
+        if inst.is_drum or num_distinct_pitches < 4 or len(inst.notes) < 10:
             midi.instruments.remove(inst)
     ns = midi_to_note_sequence(midi)
     ns = apply_sustain_control_changes(ns)
@@ -92,20 +95,24 @@ def convert_midi_to_proto(path, dest_dir):
         f.write(ns.SerializeToString())
         
 
+def convert_midi_folder(midi_root, data_dir):
+    files = list(find_files_by_extensions(midi_root, ['.mid', '.midi']))
+    os.makedirs(data_dir, exist_ok=True)
+
+    def convert(path):
+        try:
+            convert_midi_to_proto(path, data_dir)
+        except Exception as e:
+            print(e)
+
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = [executor.submit(convert, f) for f in files]
+        for future in tqdm(futures):
+            future.result()
+        
 
 
 if __name__ == '__main__':
     midi_root = sys.argv[1]
     data_dir = sys.argv[2]  
-    midi_paths = list(find_files_by_extensions(midi_root, ['.mid', '.midi']))
-    os.makedirs(data_dir, exist_ok=True)
-
-    for file in os.listdir(data_dir):
-        os.unlink(os.path.join(data_dir, file))
-
-    # Convert all MIDI files into internal format
-    for path in midi_paths:
-        try:
-            preprocess.convert_midi_to_proto(path, data_dir)
-        except Exception as e:
-            print(e)
+    convert_midi_folder(midi_root, data_dir)

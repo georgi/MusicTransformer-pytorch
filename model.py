@@ -5,6 +5,11 @@ import math
 from torch.nn import TransformerEncoder, TransformerEncoderLayer
 from torch.nn.modules.normalization import LayerNorm
 import random
+from custom.rpr import (
+    TransformerEncoderLayerRPR,
+    TransformerEncoderRPR
+)
+from tqdm.notebook import tqdm
 
 class PositionalEncoding(nn.Module):
 
@@ -61,11 +66,14 @@ class TransformerModel(nn.Module):
         self.decoder.bias.data.zero_()
         self.decoder.weight.data.uniform_(-initrange, initrange)
 
-    def forward(self, src, src_mask):
+    def forward(self, src, mask=None):
+        if mask is None:
+            device = next(self.parameters()).device
+            mask = self.gen_mask(src.shape[1]).to(device)
         src = self.embedding(src)
         src = src.permute(1, 0, 2) # (max_seq, batch_size, d_model)
         src = self.pos_encoder(src)
-        out = self.transformer(src=src, tgt=src, src_mask=src_mask)
+        out = self.transformer(src=src, tgt=src, src_mask=mask)
         out = out.permute(1, 0, 2) # (batch_size, max_seq, d_model)
         out = self.decoder(out)
         return out
@@ -95,13 +103,11 @@ class MusicTransformer(nn.Module):
         dim_feedforward=1024,
         dropout=0.1, 
         max_sequence=2048, 
-        rpr=False, 
         token_pad=0, 
         token_end=2
     ):
         super(MusicTransformer, self).__init__()
 
-        self.dummy      = DummyDecoder()
         self.vocab_size = vocab_size
         self.token_end  = token_end
         self.token_pad  = token_pad
@@ -111,44 +117,49 @@ class MusicTransformer(nn.Module):
         self.d_ff       = dim_feedforward
         self.dropout    = dropout
         self.max_seq    = max_sequence
-        self.rpr        = rpr
 
         # Input embedding
         self.embedding = nn.Embedding(self.vocab_size, self.d_model)
 
         # Positional encoding
-        self.positional_encoding = PositionalEncoding(self.d_model, self.dropout, self.max_seq)
+        self.positional_encoding = PositionalEncoding(
+            self.d_model, 
+            self.dropout, 
+            self.max_seq
+        )
 
-        # Base transformer
-        if(not self.rpr):
-            # To make a decoder-only transformer we need to use masked encoder layers
-            # Dummy decoder to essentially just return the encoder output
-            self.transformer = nn.Transformer(
-                d_model=self.d_model, 
-                nhead=self.nhead, 
-                num_encoder_layers=self.nlayers,
-                num_decoder_layers=0, 
-                dropout=self.dropout, # activation=self.ff_activ,
-                dim_feedforward=self.d_ff, 
-                custom_decoder=self.dummy
-            )
-        # RPR Transformer
-        else:
-            encoder_norm = LayerNorm(self.d_model)
-            encoder_layer = TransformerEncoderLayerRPR(self.d_model, self.nhead, self.d_ff, self.dropout, er_len=self.max_seq)
-            encoder = TransformerEncoderRPR(encoder_layer, self.nlayers, encoder_norm)
-            self.transformer = nn.Transformer(
-                d_model=self.d_model, nhead=self.nhead, num_encoder_layers=self.nlayers,
-                num_decoder_layers=0, dropout=self.dropout, # activation=self.ff_activ,
-                dim_feedforward=self.d_ff, custom_decoder=self.dummy, custom_encoder=encoder
-            )
+        encoder_norm = LayerNorm(self.d_model)
+        encoder_layer = TransformerEncoderLayerRPR(
+            self.d_model, 
+            self.nhead, 
+            self.d_ff, 
+            self.dropout, 
+            er_len=self.max_seq
+        )
+        encoder = TransformerEncoderRPR(
+            encoder_layer, 
+            self.nlayers, 
+            encoder_norm
+        )
+        self.transformer = nn.Transformer(
+            d_model=self.d_model, 
+            nhead=self.nhead, 
+            num_encoder_layers=self.nlayers,
+            num_decoder_layers=0, 
+            dropout=self.dropout, # activation=self.ff_activ,
+            dim_feedforward=self.d_ff, 
+            custom_decoder=DummyDecoder(), 
+            custom_encoder=encoder
+        )
 
         # Final output is a softmaxed linear layer
         self.Wout       = nn.Linear(self.d_model, self.vocab_size)
-        self.softmax    = nn.Softmax(dim=-1)
+        
+    def gen_mask(self, size):
+        return self.transformer.generate_square_subsequent_mask(size)
 
     # forward
-    def forward(self, x, mask):
+    def forward(self, x, mask=None):
         """
         ----------
         Author: Damon Gwinn
@@ -157,6 +168,9 @@ class MusicTransformer(nn.Module):
         A prediction at one index is the "next" prediction given all information seen previously.
         ----------
         """
+        if mask is None:
+            device = next(self.parameters()).device
+            mask = self.gen_mask(x.shape[1]).to(device)
 
         x = self.embedding(x)
 
@@ -180,72 +194,6 @@ class MusicTransformer(nn.Module):
         # They are trained to predict the next note in sequence (we don't need the last one)
         return y
 
-    # generate
-    def generate(self, primer, device, target_seq_length=1024, beam=0, beam_chance=1.0):
-        """
-        ----------
-        Author: Damon Gwinn
-        ----------
-        Generates midi given a primer sample. Music can be generated using a probability distribution over
-        the softmax probabilities (recommended) or by using a beam search.
-        ----------
-        """
-
-        assert (not self.training), "Cannot generate while in training mode"
-
-        print("Generating sequence of max length:", target_seq_length)
-
-        gen_seq = torch.full(
-            (1, target_seq_length), 
-            self.token_pad, 
-            dtype=torch.long, 
-            device=device
-        )
-
-        num_primer = len(primer)
-        gen_seq[..., :num_primer] = primer.type(torch.long).to(device)
-
-
-        # print("primer:",primer)
-        # print(gen_seq)
-        cur_i = num_primer
-        while(cur_i < target_seq_length):
-            # gen_seq_batch     = gen_seq.clone()
-            y = self.softmax(self.forward(gen_seq[..., :cur_i]))[..., :self.token_end]
-            token_probs = y[:, cur_i-1, :]
-
-            if(beam == 0):
-                beam_ran = 2.0
-            else:
-                beam_ran = random.uniform(0,1)
-
-            if(beam_ran <= beam_chance):
-                token_probs = token_probs.flatten()
-                top_res, top_i = torch.topk(token_probs, beam)
-
-                beam_rows = top_i // self.vocab_size
-                beam_cols = top_i % self.vocab_size
-
-                gen_seq = gen_seq[beam_rows, :]
-                gen_seq[..., cur_i] = beam_cols
-
-            else:
-                distrib = torch.distributions.categorical.Categorical(probs=token_probs)
-                next_token = distrib.sample()
-                # print("next token:",next_token)
-                gen_seq[:, cur_i] = next_token
-
-
-                # Let the transformer decide to end if it wants to
-                if next_token == self.token_end:
-                    print("Model called end of sequence at:", cur_i, "/", target_seq_length)
-                    break
-
-            cur_i += 1
-            if(cur_i % 50 == 0):
-                print(cur_i, "/", target_seq_length)
-
-        return gen_seq[:, :cur_i]
 
 # Used as a dummy to nn.Transformer
 # DummyDecoder
@@ -272,3 +220,68 @@ class DummyDecoder(nn.Module):
         """
 
         return memory
+
+
+def generate(
+    mt, 
+    primer, 
+    device, 
+    length, 
+    token_pad, 
+    token_end, 
+    vocab_size,
+    temperature=0.7,
+    beam=0, 
+    beam_chance=1.0
+):
+    """
+    Author: Damon Gwinn
+    """
+
+    gen_seq = torch.full(
+        (1, length), 
+        token_pad, 
+        dtype=torch.long, 
+        device=device
+    )
+
+    num_primer = len(primer)
+    gen_seq[..., :num_primer] = primer.type(torch.long).to(device)
+    cur_i = num_primer
+
+    with tqdm(total=length) as pbar:
+        while cur_i < length:
+            x = gen_seq[..., :cur_i]
+            logits = mt.forward(x)
+            y = F.softmax(logits / (temperature + 1e-12))
+            print(y[:, -1])
+            token_probs = y[:, cur_i-1, :]
+
+            if beam == 0:
+                beam_ran = 2.0
+            else:
+                beam_ran = random.uniform(0, 1)
+
+            if beam_ran <= beam_chance:
+                token_probs = token_probs.flatten()
+                top_res, top_i = torch.topk(token_probs, beam)
+
+                beam_rows = top_i // vocab_size
+                beam_cols = top_i % vocab_size
+
+                gen_seq = gen_seq[beam_rows, :]
+                gen_seq[..., cur_i] = beam_cols
+
+            else:
+                distrib = torch.distributions.categorical.Categorical(probs=token_probs)
+                next_token = distrib.sample()
+                gen_seq[:, cur_i] = next_token
+
+                # Let the transformer decide to end if it wants to
+                # if next_token == token_end:
+                #     break
+
+            cur_i += 1
+            pbar.update(1)
+
+    return gen_seq[:, :cur_i]
