@@ -81,27 +81,32 @@ class MidiEncoder:
         return performance.to_sequence()
 
 
-def convert_midi_to_proto(path, dest_dir):
+def load_sequence(path, min_pitch, max_pitch):
     midi = pretty_midi.PrettyMIDI(path)
     for i, inst in enumerate(midi.instruments):
-        num_distinct_pitches = sum([i > 1 for i in inst.get_pitch_class_histogram()])
-        if inst.is_drum or num_distinct_pitches < 4 or len(inst.notes) < 10:
+        if inst.is_drum:
             midi.instruments.remove(inst)
     ns = midi_to_note_sequence(midi)
     ns = apply_sustain_control_changes(ns)
+    ns, _ = transpose_note_sequence(ns, 0, min_pitch, max_pitch)
     del ns.control_changes[:]
+    return ns
+
+
+def convert_midi_to_proto(path, dest_dir, min_pitch, max_pitch):
+    ns = load_sequence(path, min_pitch, max_pitch)
     out_file = os.path.join(dest_dir, os.path.basename(path)) + '.pb'
     with open(out_file, 'wb') as f:
         f.write(ns.SerializeToString())
         
 
-def convert_midi_folder(midi_root, data_dir):
+def convert_midi_folder(midi_root, data_dir, min_pitch, max_pitch):
     files = list(find_files_by_extensions(midi_root, ['.mid', '.midi']))
     os.makedirs(data_dir, exist_ok=True)
 
     def convert(path):
         try:
-            convert_midi_to_proto(path, data_dir)
+            convert_midi_to_proto(path, data_dir, min_pitch, max_pitch)
         except Exception as e:
             print(e)
 

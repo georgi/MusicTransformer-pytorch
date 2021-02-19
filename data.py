@@ -4,6 +4,7 @@ import numpy as np
 import torch
 from random import randrange, gauss
 import note_seq
+from torch.utils.data import DataLoader
 from concurrent.futures import ThreadPoolExecutor
 from tqdm.notebook import tqdm
 from note_seq.sequences_lib import (
@@ -78,10 +79,10 @@ def load_seq_files(folder):
         return [future.result() for future in tqdm(futures)]
 
 
-def data_loaders(midi_encoder, data_dir, batch_size, steps_per_quarter):
+def data_loaders(midi_encoder, data_dir, batch_size, max_seq, steps_per_quarter):
     print("Load sequence files from ", data_dir)
-    data_files = data.load_seq_files(data_dir)
-    train_files, valid_files = data.train_test_split(data_files)
+    data_files = load_seq_files(data_dir)
+    train_files, valid_files = train_test_split(data_files)
 
     def quantize(seqs):
         res = []
@@ -94,14 +95,14 @@ def data_loaders(midi_encoder, data_dir, batch_size, steps_per_quarter):
                 pass
         return res
 
-    train_data = data.SequenceDataset(
+    train_data = SequenceDataset(
         sequences=quantize(train_files),
         seq_length=max_seq,
         midi_encoder=midi_encoder,
         time_augment=0,
         transpose_augment=12
     )
-    valid_data = data.SequenceDataset(
+    valid_data = SequenceDataset(
         sequences=quantize(valid_files),
         seq_length=max_seq,
         midi_encoder=midi_encoder,
