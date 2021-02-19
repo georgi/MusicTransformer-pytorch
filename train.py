@@ -14,7 +14,6 @@ class Trainer:
     def __init__(
         self,
         mt, 
-        optimizer,
         device,
         midi_encoder,
         train_loader,
