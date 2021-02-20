@@ -20,27 +20,15 @@ class Trainer:
         valid_loader,
         log_dir,
         model_dir,
-        num_epochs,
-        max_lr=1e-3
     ):
         self.mt = mt
-        self.optimizer = Adam(
-            mt.parameters(), 
-            lr=1e-4
-        )
+        self.optimizer = Adam(mt.parameters())
         self.device = device
         self.midi_encoder = midi_encoder
         self.train_loader = train_loader
         self.valid_loader = valid_loader
         self.log_dir = log_dir
         self.model_dir = model_dir
-        self.current_epoch = 0
-        self.last_epoch = num_epochs
-        self.scheduler = OneCycleLR(
-            self.optimizer, 
-            max_lr=max_lr,
-            total_steps=num_epochs
-        )
         os.makedirs(model_dir, exist_ok=True)
         os.makedirs(log_dir, exist_ok=True)
         self.summary = SummaryWriter(log_dir=log_dir)
@@ -58,15 +46,18 @@ class Trainer:
         lr_finder.plot() # to inspect the loss-learning rate graph
         lr_finder.reset()
 
-    def run(self):
+    def run(self, num_epochs, max_lr, start_epoch=0):
         mt = self.mt
-        epochs = range(self.current_epoch, self.last_epoch)
+        scheduler = OneCycleLR(
+            self.optimizer, 
+            max_lr=max_lr,
+            total_steps=num_epochs
+        )
         criterion = self.get_criterion()
-        with tqdm(total=len(epochs)) as pbar:
+        with tqdm(total=num_epochs) as pbar:
             train_loss = []
             eval_loss = []
-            for e in epochs:
-                self.epoch = e
+            for e in range(start_epoch, start_epoch + num_epochs):
                 mt.train()
                 for batch_x, batch_y in self.train_loader:
                     self.optimizer.zero_grad()
@@ -83,7 +74,7 @@ class Trainer:
                         output = mt(batch_x.to(self.device))
                         loss = criterion(output, batch_y.to(self.device))
                         eval_loss.append(loss.item())
-                self.scheduler.step()
+                scheduler.step()
                 pbar.set_description(
                     f"[{e}] "
                     f"loss={np.mean(train_loss):.2f} "
