@@ -16,6 +16,7 @@ from utils import find_files_by_extensions
 from tqdm.notebook import tqdm
 from concurrent.futures import ThreadPoolExecutor
 
+
 class MidiEncoder:
    
     def __init__(self, num_velocity_bins, min_pitch, max_pitch, steps_per_quarter=None, steps_per_second=None):
@@ -27,11 +28,13 @@ class MidiEncoder:
             min_pitch=min_pitch,
             max_pitch=max_pitch
         )
-        self.num_reserved_ids = 3
+        self.num_reserved_ids = 5
         self.vocab_size = self._encoding.num_classes + self.num_reserved_ids + 1
         self.token_pad = 0
         self.token_sos = 1
         self.token_eos = 2
+        self.token_bar = 3
+        self.token_beat = 4
 
     def encode_note_sequence(self, ns):
         if self._steps_per_quarter:
@@ -47,16 +50,32 @@ class MidiEncoder:
                     num_velocity_bins=self._num_velocity_bins
                 )
 
-        event_ids = [self._encoding.encode_event(event) + 
-                     self.num_reserved_ids
-                     for event in performance]
+        event_ids = [self.token_sos, self.token_bar]
+        current_step = 0
+        ts = ns.time_signatures[0]
+        steps_per_beat = ts.numerator
+        steps_per_bar = ts.numerator * ts.denominator
 
-        event_ids = [i for i in event_ids if i > 0]
+        def emit_metric_events():
+            if current_step % steps_per_bar == 0:
+                event_ids.append(midi_encoder.token_bar)
+            elif current_step % steps_per_beat == 0:
+                event_ids.append(midi_encoder.token_beat)
+
+        for event in performance:
+            if event.event_type == note_seq.PerformanceEvent.TIME_SHIFT:
+                for _ in range(event.event_value):
+                    current_step += 1
+                    emit_metric_events() 
+            id = midi_encoder._encoding.encode_event(event) + \
+                midi_encoder.num_reserved_ids
+            if id > 0:
+                event_ids.append(id)
 
         assert(max(event_ids) < self.vocab_size)
         assert(min(event_ids) >= 0)
 
-        return [self.token_sos] + event_ids
+        return event_ids + [self.token_eos]
 
 
     def decode_ids(self, ids):
@@ -79,6 +98,7 @@ class MidiEncoder:
                 performance.append(self._encoding.decode_event(i - self.num_reserved_ids))
 
         return performance.to_sequence()
+
 
 
 def load_sequence(path, min_pitch, max_pitch):
