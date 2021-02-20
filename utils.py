@@ -21,6 +21,24 @@ def find_files_by_extensions(root, exts=[]):
                 yield os.path.join(path, name)
 
 
+def sample(model, sample_length, prime_sequence, device, temperature=1):
+    model.eval()
+    input_sequence = prime_sequence.copy()
+    input_tensor = torch.LongTensor(input_sequence).unsqueeze(0).to(device)
+
+    for i in range(sample_length):
+        out = model(input_tensor)[0, -1, :]
+        probs = F.softmax(out / temperature, dim=0)
+        top = torch.topk(probs, 5)
+        for i in range(len(probs)):
+            if i not in top.indices:
+                probs[i] = 0
+        c = torch.multinomial(probs, 1)
+        input_tensor = torch.cat([input_tensor[:,1:], c[None]], dim=1)
+        input_sequence.append(c.item())
+
+    return input_sequence
+
 
 def attention_image_summary(name, attn, step=0, writer=None):
     """Compute color image summary.
