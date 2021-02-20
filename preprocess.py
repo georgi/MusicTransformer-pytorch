@@ -58,17 +58,16 @@ class MidiEncoder:
 
         def emit_metric_events():
             if current_step % steps_per_bar == 0:
-                event_ids.append(midi_encoder.token_bar)
+                event_ids.append(self.token_bar)
             elif current_step % steps_per_beat == 0:
-                event_ids.append(midi_encoder.token_beat)
+                event_ids.append(self.token_beat)
 
         for event in performance:
             if event.event_type == note_seq.PerformanceEvent.TIME_SHIFT:
                 for _ in range(event.event_value):
                     current_step += 1
                     emit_metric_events() 
-            id = midi_encoder._encoding.encode_event(event) + \
-                midi_encoder.num_reserved_ids
+            id = self._encoding.encode_event(event) + self.num_reserved_ids
             if id > 0:
                 event_ids.append(id)
 
