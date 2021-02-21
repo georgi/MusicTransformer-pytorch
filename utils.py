@@ -1,5 +1,4 @@
 import os
-import numpy as np
 import torch
 import torch.nn.functional as F
 # from custom.config import config
@@ -25,7 +24,7 @@ def sample(model, sample_length, prime_sequence, device, temperature=1):
     input_sequence = prime_sequence.copy()
     input_tensor = torch.LongTensor(input_sequence).unsqueeze(0).to(device)
 
-    for i in range(sample_length):
+    for i in tqdm(range(sample_length)):
         out = model(input_tensor)[0, -1, :]
         probs = F.softmax(out / temperature, dim=0)
         top = torch.topk(probs, 5)
@@ -52,7 +51,6 @@ def attention_image_summary(name, attn, step=0, writer=None):
         (query_rows, query_cols, query_channels,
          memory_rows, memory_cols, memory_channels).
     """
-    import torchvision
     num_heads = attn.size(1)
     # [batch, query_length, memory_length, num_heads]
     image = attn.permute(0, 2, 3, 1)
