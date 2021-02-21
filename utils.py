@@ -2,7 +2,6 @@ import os
 import numpy as np
 import torch
 import torch.nn.functional as F
-import torchvision
 # from custom.config import config
 
 
@@ -53,6 +52,7 @@ def attention_image_summary(name, attn, step=0, writer=None):
         (query_rows, query_cols, query_channels,
          memory_rows, memory_cols, memory_channels).
     """
+    import torchvision
     num_heads = attn.size(1)
     # [batch, query_length, memory_length, num_heads]
     image = attn.permute(0, 2, 3, 1)

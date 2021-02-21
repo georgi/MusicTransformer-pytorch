@@ -1,4 +1,3 @@
-import utils
 import os
 import sys
 import pickle

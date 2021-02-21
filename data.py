@@ -1,5 +1,4 @@
 import random
-import utils
 import numpy as np
 import torch
 from random import randrange, gauss
@@ -12,6 +11,7 @@ from note_seq.sequences_lib import (
     transpose_note_sequence,
     NegativeTimeError
 )
+import utils
 
 
 def process_midi(raw_mid, max_seq, random_seq, token_pad=0, token_end=2):
