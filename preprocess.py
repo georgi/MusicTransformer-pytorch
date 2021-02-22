@@ -18,7 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 class MidiEncoder:
    
-    def __init__(self, num_velocity_bins, min_pitch, max_pitch, steps_per_quarter=None, steps_per_second=None):
+    def __init__(self, num_velocity_bins, min_pitch, max_pitch, steps_per_quarter=None, steps_per_second=None, encode_metrics=True):
         self._steps_per_second = steps_per_second
         self._steps_per_quarter = steps_per_quarter
         self._num_velocity_bins = num_velocity_bins
@@ -27,6 +27,7 @@ class MidiEncoder:
             min_pitch=min_pitch,
             max_pitch=max_pitch
         )
+        self.encode_metrics = encode_metrics
         self.num_reserved_ids = 5
         self.vocab_size = self._encoding.num_classes + self.num_reserved_ids + 1
         self.token_pad = 0
@@ -65,7 +66,8 @@ class MidiEncoder:
             if event.event_type == note_seq.PerformanceEvent.TIME_SHIFT:
                 for _ in range(event.event_value):
                     current_step += 1
-                    emit_metric_events() 
+                    if self.encode_metrics:
+                        emit_metric_events() 
             id = self._encoding.encode_event(event) + self.num_reserved_ids
             if id > 0:
                 event_ids.append(id)

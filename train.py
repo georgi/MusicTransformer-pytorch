@@ -1,13 +1,12 @@
 import numpy as np
 import torch
-from torch import nn
 from torch.utils.tensorboard import SummaryWriter
 from tqdm.notebook import tqdm
 from custom.criterion import smooth_cross_entropy
 from torch_lr_finder import LRFinder
 from torch.optim.lr_scheduler import OneCycleLR
-from torch import nn
 from torch.optim import Adam
+from torch.nn.functional import cross_entropy
 import os
 
 class Trainer:
@@ -33,10 +32,15 @@ class Trainer:
         os.makedirs(log_dir, exist_ok=True)
         self.summary = SummaryWriter(log_dir=log_dir)
 
-    def get_criterion(self):
+    def get_criterion(self, mode='train'):
+        if mode == 'train':
+            loss_fn = smooth_cross_entropy
+        else:
+            loss_fn = cross_entropy
+
         def criterion(input, target):
             input_flat = input.view(-1, self.midi_encoder.vocab_size)
-            return smooth_cross_entropy(input_flat, target.flatten())
+            return loss_fn(input_flat, target.flatten())
         return criterion
 
     def find_lr(self):
@@ -51,9 +55,10 @@ class Trainer:
         scheduler = OneCycleLR(
             self.optimizer, 
             max_lr=max_lr,
-            total_steps=num_epochs
+            total_steps=num_epochs * len(self.train_loader)
         )
-        criterion = self.get_criterion()
+        train_criterion = self.get_criterion('train')
+        eval_criterion = self.get_criterion('eval')
         with tqdm(total=num_epochs) as pbar:
             train_loss = []
             eval_loss = []
@@ -62,19 +67,19 @@ class Trainer:
                 for batch_x, batch_y in self.train_loader:
                     self.optimizer.zero_grad()
                     output = mt(batch_x.to(self.device))
-                    loss = criterion(output, batch_y.to(self.device))
+                    loss = train_criterion(output, batch_y.to(self.device))
                     loss.backward()
                     # torch.nn.utils.clip_grad_norm_(mt.parameters(), 0.5)
                     self.optimizer.step()
                     train_loss.append(loss.item())
+                    scheduler.step()
                 
                 with torch.no_grad():
                     mt.eval()
                     for batch_x, batch_y in self.valid_loader:
                         output = mt(batch_x.to(self.device))
-                        loss = criterion(output, batch_y.to(self.device))
+                        loss = eval_criterion(output, batch_y.to(self.device))
                         eval_loss.append(loss.item())
-                scheduler.step()
                 pbar.set_description(
                     f"[{e}] "
                     f"loss={np.mean(train_loss):.2f} "
