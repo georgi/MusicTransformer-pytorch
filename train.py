@@ -9,10 +9,11 @@ from torch.optim import Adam
 from torch.nn.functional import cross_entropy
 import os
 
+
 class Trainer:
     def __init__(
         self,
-        mt, 
+        mt,
         device,
         midi_encoder,
         train_loader,
@@ -47,13 +48,13 @@ class Trainer:
         lr_finder = LRFinder(
             self.mt, self.optimizer, self.get_criterion(), device=self.device)
         lr_finder.range_test(self.train_loader, end_lr=10, num_iter=100)
-        lr_finder.plot() # to inspect the loss-learning rate graph
+        lr_finder.plot()  # to inspect the loss-learning rate graph
         lr_finder.reset()
 
     def run(self, num_epochs, max_lr, start_epoch=0):
         mt = self.mt
         scheduler = OneCycleLR(
-            self.optimizer, 
+            self.optimizer,
             max_lr=max_lr,
             total_steps=num_epochs * len(self.train_loader)
         )
@@ -73,7 +74,7 @@ class Trainer:
                     self.optimizer.step()
                     train_loss.append(loss.item())
                     scheduler.step()
-                
+
                 with torch.no_grad():
                     mt.eval()
                     for batch_x, batch_y in self.valid_loader:
@@ -87,9 +88,12 @@ class Trainer:
                 )
                 pbar.update()
                 lr = self.optimizer.param_groups[0]['lr']
-                self.summary.add_scalar("loss/train", np.mean(train_loss), global_step=e)
-                self.summary.add_scalar("loss/eval", np.mean(eval_loss), global_step=e)
+                self.summary.add_scalar(
+                    "loss/train", np.mean(train_loss), global_step=e)
+                self.summary.add_scalar(
+                    "loss/eval", np.mean(eval_loss), global_step=e)
                 self.summary.add_scalar("lr", lr, global_step=e)
                 self.summary.flush()
                 if e % 100 == 0:
-                    torch.save(mt.state_dict(), os.path.join(self.model_dir, f'{e}.pth'))
+                    torch.save(mt.state_dict(), os.path.join(
+                        self.model_dir, f'{e}.pth'))

@@ -1,12 +1,9 @@
 import os
 import sys
-import pickle
 import note_seq
 from note_seq.midi_io import midi_to_note_sequence
 import pretty_midi
 from note_seq.sequences_lib import (
-    quantize_note_sequence_absolute,
-    stretch_note_sequence,
     transpose_note_sequence,
     apply_sustain_control_changes,
 )
@@ -17,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 
 class MidiEncoder:
-   
+
     def __init__(self, num_velocity_bins, min_pitch, max_pitch, steps_per_quarter=None, steps_per_second=None, encode_metrics=True):
         self._steps_per_second = steps_per_second
         self._steps_per_quarter = steps_per_quarter
@@ -45,10 +42,10 @@ class MidiEncoder:
         else:
             performance = note_seq.Performance(
                 note_seq.quantize_note_sequence_absolute(
-                    ns, 
+                    ns,
                     self._steps_per_second),
-                    num_velocity_bins=self._num_velocity_bins
-                )
+                num_velocity_bins=self._num_velocity_bins
+            )
 
         event_ids = [self.token_sos, self.token_bar]
         current_step = 0
@@ -67,7 +64,7 @@ class MidiEncoder:
                 for _ in range(event.event_value):
                     current_step += 1
                     if self.encode_metrics:
-                        emit_metric_events() 
+                        emit_metric_events()
             id = self._encoding.encode_event(event) + self.num_reserved_ids
             if id > 0:
                 event_ids.append(id)
@@ -76,7 +73,6 @@ class MidiEncoder:
         assert(min(event_ids) >= 0)
 
         return event_ids + [self.token_eos]
-
 
     def decode_ids(self, ids):
         assert(max(ids) < self.vocab_size)
@@ -95,10 +91,10 @@ class MidiEncoder:
 
         for i in ids:
             if i >= self.num_reserved_ids:
-                performance.append(self._encoding.decode_event(i - self.num_reserved_ids))
+                performance.append(self._encoding.decode_event(
+                    i - self.num_reserved_ids))
 
         return performance.to_sequence()
-
 
 
 def load_sequence(path, min_pitch, max_pitch):
@@ -118,7 +114,7 @@ def convert_midi_to_proto(path, dest_dir, min_pitch, max_pitch):
     out_file = os.path.join(dest_dir, os.path.basename(path)) + '.pb'
     with open(out_file, 'wb') as f:
         f.write(ns.SerializeToString())
-        
+
 
 def convert_midi_folder(midi_root, data_dir, min_pitch, max_pitch):
     files = list(find_files_by_extensions(midi_root, ['.mid', '.midi']))
@@ -134,10 +130,9 @@ def convert_midi_folder(midi_root, data_dir, min_pitch, max_pitch):
         futures = [executor.submit(convert, f) for f in files]
         for future in tqdm(futures):
             future.result()
-        
 
 
 if __name__ == '__main__':
     midi_root = sys.argv[1]
-    data_dir = sys.argv[2]  
+    data_dir = sys.argv[2]
     convert_midi_folder(midi_root, data_dir)
