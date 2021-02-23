@@ -129,7 +129,5 @@ class SequenceDataset(torch.utils.data.Dataset):
             data,
             self.seq_length,
             self.midi_encoder.token_pad,
-            self.midi_encoder.token_sos,
-            self.midi_encoder.token_eos
         )
         return data
