@@ -20,7 +20,7 @@ def process_midi(seq, max_seq, token_pad):
         x = torch.full((max_seq, ), token_pad, dtype=torch.long)
         tgt = torch.full((max_seq, ), token_pad, dtype=torch.long)
         x[:len(seq)] = seq
-        tgt[:len(seq)] = seq[1:]
+        tgt[:len(seq) - 1] = seq[1:]
     else:
         start = random.randint(0, len(seq) - full_seq)
         end = start + full_seq
