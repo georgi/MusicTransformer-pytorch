@@ -23,9 +23,6 @@ def process_midi(raw_mid, max_seq, random_seq, token_pad=0, token_end=2):
     ----------
     """
 
-    x = torch.full((max_seq, ), token_pad, dtype=torch.long)
-    tgt = torch.full((max_seq, ), token_pad, dtype=torch.long)
-
     raw_len = len(raw_mid)
     full_seq = max_seq + 1  # Performing seq2seq
 
@@ -33,6 +30,8 @@ def process_midi(raw_mid, max_seq, random_seq, token_pad=0, token_end=2):
         return x, tgt
 
     if raw_len < full_seq:
+        x = torch.full((full_seq, ), token_pad, dtype=torch.long)
+        tgt = torch.full((full_seq, ), token_pad, dtype=torch.long)
         x[:raw_len] = raw_mid
         tgt[:raw_len-1] = raw_mid[1:]
         tgt[raw_len] = token_end
