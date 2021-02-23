@@ -13,37 +13,18 @@ from note_seq.sequences_lib import (
 import utils
 
 
-def process_midi(raw_mid, max_seq, random_seq, token_pad=0, token_end=2):
-    """
-    ----------
-    Author: Damon Gwinn
-    ----------
-    Takes in pre-processed raw midi and returns the input and target.
-    Can use a random sequence or go from the start based on random_seq.
-    ----------
-    """
-
-    raw_len = len(raw_mid)
+def process_midi(seq, max_seq, token_pad):
     full_seq = max_seq + 1  # Performing seq2seq
 
-    if raw_len == 0:
-        return x, tgt
-
-    if raw_len < full_seq:
-        x = torch.full((full_seq, ), token_pad, dtype=torch.long)
-        tgt = torch.full((full_seq, ), token_pad, dtype=torch.long)
-        x[:raw_len] = raw_mid
-        tgt[:raw_len-1] = raw_mid[1:]
-        tgt[raw_len] = token_end
+    if len(seq) < max_seq:
+        x = torch.full((max_seq, ), token_pad, dtype=torch.long)
+        tgt = torch.full((max_seq, ), token_pad, dtype=torch.long)
+        x[:len(seq)] = seq
+        tgt[:len(seq)] = seq[1:]
     else:
-        if random_seq:
-            end_range = raw_len - full_seq
-            start = random.randint(0, end_range)
-        else:
-            start = 0
-
+        start = random.randint(0, len(seq) - full_seq)
         end = start + full_seq
-        data = raw_mid[start:end]
+        data = seq[start:end]
         x = data[:max_seq]
         tgt = data[1:full_seq]
 
@@ -147,8 +128,8 @@ class SequenceDataset(torch.utils.data.Dataset):
         data = process_midi(
             data,
             self.seq_length,
-            True,
             self.midi_encoder.token_pad,
+            self.midi_encoder.token_sos,
             self.midi_encoder.token_eos
         )
         return data

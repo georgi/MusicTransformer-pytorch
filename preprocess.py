@@ -47,7 +47,7 @@ class MidiEncoder:
                 num_velocity_bins=self._num_velocity_bins
             )
 
-        event_ids = [self.token_sos, self.token_bar]
+        event_ids = [self.token_sos]
         current_step = 0
         ts = ns.time_signatures[0]
         steps_per_beat = ts.numerator
@@ -58,6 +58,9 @@ class MidiEncoder:
                 event_ids.append(self.token_bar)
             elif current_step % steps_per_beat == 0:
                 event_ids.append(self.token_beat)
+                
+        if self.encode_metrics:
+            emit_metric_events()
 
         for event in performance:
             if event.event_type == note_seq.PerformanceEvent.TIME_SHIFT:
