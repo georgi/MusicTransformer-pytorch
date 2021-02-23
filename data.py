@@ -22,7 +22,10 @@ def process_midi(seq, max_seq, token_pad):
         x[:len(seq)] = seq
         tgt[:len(seq) - 1] = seq[1:]
     else:
-        start = random.randint(0, len(seq) - full_seq)
+        if len(seq) == full_seq:
+            start = 0
+        else:
+            start = random.randint(0, len(seq) - full_seq)
         end = start + full_seq
         data = seq[start:end]
         x = data[:max_seq]
