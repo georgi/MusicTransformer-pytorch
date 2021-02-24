@@ -65,7 +65,8 @@ class Trainer:
                 if '.pth' in f
             ]
             if len(fnames) == 0:
-                raise Exception("cannot find any checkpoint")
+                print("cannot find any checkpoint")
+                return
             f = max(fnames, key=lambda f: int(f[:-4]))
             file = os.path.join(self.model_dir, f)
         data = torch.load(file)
