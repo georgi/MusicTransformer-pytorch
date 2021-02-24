@@ -1,5 +1,3 @@
-import os
-import sys
 import note_seq
 from note_seq.midi_io import midi_to_note_sequence
 import pretty_midi
@@ -19,6 +17,8 @@ class MidiEncoder:
         self._steps_per_second = steps_per_second
         self._steps_per_quarter = steps_per_quarter
         self._num_velocity_bins = num_velocity_bins
+        self.min_pitch = min_pitch
+        self.max_pitch = max_pitch
         self._encoding = PerformanceOneHotEncoding(
             num_velocity_bins=num_velocity_bins,
             min_pitch=min_pitch,
@@ -99,43 +99,20 @@ class MidiEncoder:
 
         return performance.to_sequence()
 
+    def load_midi(self, path):
+        midi = pretty_midi.PrettyMIDI(path)
+        for i, inst in enumerate(midi.instruments):
+            if inst.is_drum:
+                midi.instruments.remove(inst)
+        ns = midi_to_note_sequence(midi)
+        ns = apply_sustain_control_changes(ns)
+        ns, _ = transpose_note_sequence(ns, 0, self.min_pitch, self.max_pitch)
+        del ns.control_changes[:]
+        return ns
+    
+    def load_midi_folder(self, folder):
+        files = list(find_files_by_extensions(folder, ['.mid', '.midi']))
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = [executor.submit(self.load_midi, f) for f in files]
+            return [future.result() for future in tqdm(futures)]
 
-def load_sequence(path, min_pitch, max_pitch):
-    midi = pretty_midi.PrettyMIDI(path)
-    for i, inst in enumerate(midi.instruments):
-        if inst.is_drum:
-            midi.instruments.remove(inst)
-    ns = midi_to_note_sequence(midi)
-    ns = apply_sustain_control_changes(ns)
-    ns, _ = transpose_note_sequence(ns, 0, min_pitch, max_pitch)
-    del ns.control_changes[:]
-    return ns
-
-
-def convert_midi_to_proto(path, dest_dir, min_pitch, max_pitch):
-    ns = load_sequence(path, min_pitch, max_pitch)
-    out_file = os.path.join(dest_dir, os.path.basename(path)) + '.pb'
-    with open(out_file, 'wb') as f:
-        f.write(ns.SerializeToString())
-
-
-def convert_midi_folder(midi_root, data_dir, min_pitch, max_pitch):
-    files = list(find_files_by_extensions(midi_root, ['.mid', '.midi']))
-    os.makedirs(data_dir, exist_ok=True)
-
-    def convert(path):
-        try:
-            convert_midi_to_proto(path, data_dir, min_pitch, max_pitch)
-        except Exception as e:
-            print(e)
-
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        futures = [executor.submit(convert, f) for f in files]
-        for future in tqdm(futures):
-            future.result()
-
-
-if __name__ == '__main__':
-    midi_root = sys.argv[1]
-    data_dir = sys.argv[2]
-    convert_midi_folder(midi_root, data_dir)

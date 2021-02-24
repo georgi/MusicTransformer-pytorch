@@ -3,18 +3,15 @@ import torch
 from random import randrange, gauss
 import note_seq
 from torch.utils.data import DataLoader
-from concurrent.futures import ThreadPoolExecutor
-from tqdm.notebook import tqdm
 from note_seq.sequences_lib import (
     stretch_note_sequence,
     transpose_note_sequence,
     NegativeTimeError
 )
-import utils
 
 
 def process_midi(seq, max_seq, token_pad):
-    if len(seq) <= max_seq :
+    if len(seq) <= max_seq:
         x = torch.full((max_seq, ), token_pad, dtype=torch.long)
         tgt = torch.full((max_seq, ), token_pad, dtype=torch.long)
         x[:len(seq)] = seq
@@ -41,23 +38,9 @@ def train_test_split(dataset, split=0.90):
     return train, dataset_copy
 
 
-def load_sequence(fname):
-    with open(fname, 'rb') as f:
-        ns = note_seq.NoteSequence()
-        ns.ParseFromString(f.read())
-        return ns
-
-
-def load_seq_files(folder):
-    files = list(utils.find_files_by_extensions(folder, ['.pb']))
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        futures = [executor.submit(load_sequence, f) for f in files]
-        return [future.result() for future in tqdm(futures)]
-
-
 def data_loaders(midi_encoder, data_dir, batch_size, max_seq, steps_per_quarter):
-    print("Load sequence files from ", data_dir)
-    data_files = load_seq_files(data_dir)
+    print("Load midi files from ", data_dir)
+    data_files = midi_encoder.load_midi_folder(data_dir)
     train_files, valid_files = train_test_split(data_files)
 
     def quantize(seqs):
