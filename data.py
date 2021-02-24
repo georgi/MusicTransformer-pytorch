@@ -22,8 +22,9 @@ def process_midi(seq, max_seq, token_pad):
         x[:len(seq)] = seq
         tgt[:len(seq) - 1] = seq[1:]
     else:
-        start = random.randint(0, len(seq) - full_seq)
-        catch ValueError:
+        try:
+            start = random.randint(0, len(seq) - full_seq)
+        except ValueError as _:
             start = 0
         end = start + full_seq
         data = seq[start:end]
