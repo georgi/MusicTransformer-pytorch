@@ -84,11 +84,15 @@ class Trainer:
 
     def run(self, num_epochs, max_lr):
         mt = self.mt
+        if self.epoch == 0:
+            last_step = -1
+        else:
+            last_step = self.epoch * len(self.train_loader),
         scheduler = OneCycleLR(
             self.optimizer,
             max_lr=max_lr,
             total_steps=num_epochs * len(self.train_loader),
-            last_epoch=self.epoch * len(self.train_loader),
+            last_epoch=last_step
         )
         train_criterion = self.get_criterion('train')
         eval_criterion = self.get_criterion('eval')
