@@ -69,6 +69,7 @@ class Trainer:
                 return
             f = max(fnames, key=lambda f: int(f[:-4]))
             file = os.path.join(self.model_dir, f)
+        print("Loading checkpoint from ", file)
         data = torch.load(file)
         self.epoch = data['epoch']
         self.mt.load_state_dict(data['model'])
