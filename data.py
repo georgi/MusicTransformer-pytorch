@@ -1,6 +1,6 @@
 import random
 import torch
-from random import randrange, gauss
+from random import randrange, uniform
 import note_seq
 from torch.utils.data import DataLoader
 from note_seq.sequences_lib import (
@@ -38,17 +38,27 @@ def train_test_split(dataset, split=0.90):
     return train, dataset_copy
 
 
-def data_loaders(midi_encoder, data_dir, batch_size, max_seq, steps_per_quarter):
+def data_loaders(
+    midi_encoder, 
+    data_dir, 
+    batch_size, 
+    max_seq, 
+    time_augment, 
+    transpose_augment,
+    num_workers=8
+):
     print("Load midi files from ", data_dir)
     data_files = midi_encoder.load_midi_folder(data_dir)
     train_files, valid_files = train_test_split(data_files)
 
     def quantize(seqs):
+        if midi_encoder.steps_per_quarter is None:
+            return seqs
         res = []
         for ns in seqs:
             try:
                 res.append(note_seq.quantize_note_sequence(
-                    ns, steps_per_quarter))
+                    ns, midi_encoder.steps_per_quarter))
             except note_seq.MultipleTimeSignatureError:
                 pass
             except note_seq.MultipleTempoError:
@@ -59,8 +69,8 @@ def data_loaders(midi_encoder, data_dir, batch_size, max_seq, steps_per_quarter)
         sequences=quantize(train_files),
         seq_length=max_seq,
         midi_encoder=midi_encoder,
-        time_augment=0,
-        transpose_augment=12
+        time_augment=time_augment,
+        transpose_augment=transpose_augment
     )
     valid_data = SequenceDataset(
         sequences=quantize(valid_files),
@@ -70,14 +80,21 @@ def data_loaders(midi_encoder, data_dir, batch_size, max_seq, steps_per_quarter)
         transpose_augment=0
     )
 
-    train_loader = DataLoader(train_data, batch_size, num_workers=8)
-    valid_loader = DataLoader(valid_data, batch_size, num_workers=8)
+    train_loader = DataLoader(train_data, batch_size, num_workers=num_workers)
+    valid_loader = DataLoader(valid_data, batch_size, num_workers=num_workers)
 
     return train_loader, valid_loader
 
 
 class SequenceDataset(torch.utils.data.Dataset):
-    def __init__(self, sequences, seq_length, midi_encoder, time_augment, transpose_augment):
+    def __init__(
+        self, 
+        sequences, 
+        seq_length, 
+        midi_encoder, 
+        time_augment, 
+        transpose_augment
+    ):
         self.sequences = sequences
         self.seq_length = seq_length
         self.midi_encoder = midi_encoder
@@ -94,7 +111,10 @@ class SequenceDataset(torch.utils.data.Dataset):
             ns = transpose_note_sequence(ns, transpose)[0]
         if self.time_augment > 0:
             try:
-                stretch_factor = gauss(1.0, self.time_augment)
+                stretch_factor = uniform(
+                    1.0 - self.time_augment, 
+                    1.0 + self.time_augment
+                )
                 ns = stretch_note_sequence(ns, stretch_factor)
             except NegativeTimeError:
                 pass
