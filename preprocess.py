@@ -13,7 +13,15 @@ from concurrent.futures import ThreadPoolExecutor
 
 class MidiEncoder:
 
-    def __init__(self, num_velocity_bins, min_pitch, max_pitch, steps_per_quarter=None, steps_per_second=None, encode_metrics=True):
+    def __init__(
+        self, 
+        num_velocity_bins, 
+        min_pitch, 
+        max_pitch, 
+        steps_per_quarter=None, 
+        steps_per_second=None, 
+        encode_metrics=True
+    ):
         self._steps_per_second = steps_per_second
         self._steps_per_quarter = steps_per_quarter
         self._num_velocity_bins = num_velocity_bins

@@ -14,21 +14,26 @@ class Trainer:
     def __init__(
         self,
         mt,
+        optimizer,
         device,
         midi_encoder,
         train_loader,
         valid_loader,
         log_dir,
         model_dir,
+        epoch=0,
+        save_every=20
     ):
         self.mt = mt
-        self.optimizer = Adam(mt.parameters())
+        self.optimizer = optimizer
         self.device = device
         self.midi_encoder = midi_encoder
         self.train_loader = train_loader
         self.valid_loader = valid_loader
         self.log_dir = log_dir
         self.model_dir = model_dir
+        self.epoch = epoch
+        self.save_every = save_every
         os.makedirs(model_dir, exist_ok=True)
         os.makedirs(log_dir, exist_ok=True)
         self.summary = SummaryWriter(log_dir=log_dir)
@@ -44,6 +49,30 @@ class Trainer:
             return loss_fn(input_flat, target.flatten())
         return criterion
 
+    def save_checkpoint(self):
+        data = {
+            'model': self.mt.state_dict(),
+            'optimizer': self.optimizer.state_dict(),
+            'epoch': self.epoch
+        }
+        torch.save(data, os.path.join(self.model_dir, f'{self.epoch}.pth'))
+        
+    def load_checkpoint(self, file=None):
+        if file is None:
+            fnames = [
+                f
+                for f in os.listdir(self.model_dir)
+                if '.pth' in f
+            ]
+            if len(fnames) == 0:
+                raise Exception("cannot find any checkpoint")
+            f = max(fnames, key=lambda f: int(f[:-4]))
+            file = os.path.join(self.model_dir, f)
+        data = torch.load(file)
+        self.epoch = data['epoch']
+        self.mt.load_state_dict(data['model'])
+        self.optimizer.load_state_dict(data['optimizer'])
+
     def find_lr(self):
         lr_finder = LRFinder(
             self.mt, self.optimizer, self.get_criterion(), device=self.device)
@@ -51,19 +80,21 @@ class Trainer:
         lr_finder.plot()  # to inspect the loss-learning rate graph
         lr_finder.reset()
 
-    def run(self, num_epochs, max_lr, start_epoch=0):
+    def run(self, num_epochs, max_lr):
         mt = self.mt
         scheduler = OneCycleLR(
             self.optimizer,
             max_lr=max_lr,
-            total_steps=num_epochs * len(self.train_loader)
+            total_steps=num_epochs * len(self.train_loader),
+            last_epoch=self.epoch * len(self.train_loader),
         )
         train_criterion = self.get_criterion('train')
         eval_criterion = self.get_criterion('eval')
         with tqdm(total=num_epochs) as pbar:
-            train_loss = []
-            eval_loss = []
-            for e in range(start_epoch, start_epoch + num_epochs):
+            for e in range(self.epoch, self.epoch + num_epochs):
+                self.epoch = e
+                train_loss = []
+                eval_loss = []
                 mt.train()
                 for batch_x, batch_y in self.train_loader:
                     self.optimizer.zero_grad()
@@ -94,6 +125,5 @@ class Trainer:
                     "loss/eval", np.mean(eval_loss), global_step=e)
                 self.summary.add_scalar("lr", lr, global_step=e)
                 self.summary.flush()
-                if e % 100 == 0:
-                    torch.save(mt.state_dict(), os.path.join(
-                        self.model_dir, f'{e}.pth'))
+                if e % self.save_every == 0:
+                    self.save_checkpoint()
