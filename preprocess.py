@@ -22,19 +22,19 @@ class MidiEncoder:
         steps_per_second=None, 
         encode_metrics=True
     ):
-        self._steps_per_second = steps_per_second
-        self._steps_per_quarter = steps_per_quarter
-        self._num_velocity_bins = num_velocity_bins
+        self.steps_per_second = steps_per_second
+        self.steps_per_quarter = steps_per_quarter
+        self.num_velocity_bins = num_velocity_bins
         self.min_pitch = min_pitch
         self.max_pitch = max_pitch
-        self._encoding = PerformanceOneHotEncoding(
+        self.encoding = PerformanceOneHotEncoding(
             num_velocity_bins=num_velocity_bins,
             min_pitch=min_pitch,
             max_pitch=max_pitch
         )
         self.encode_metrics = encode_metrics
         self.num_reserved_ids = 5
-        self.vocab_size = self._encoding.num_classes + self.num_reserved_ids + 1
+        self.vocab_size = self.encoding.num_classes + self.num_reserved_ids + 1
         self.token_pad = 0
         self.token_sos = 1
         self.token_eos = 2
@@ -42,17 +42,17 @@ class MidiEncoder:
         self.token_beat = 4
 
     def encode_note_sequence(self, ns):
-        if self._steps_per_quarter:
+        if self.steps_per_quarter:
             performance = note_seq.MetricPerformance(
-                note_seq.quantize_note_sequence(ns, self._steps_per_quarter),
-                num_velocity_bins=self._num_velocity_bins,
+                note_seq.quantize_note_sequence(ns, self.steps_per_quarter),
+                num_velocity_bins=self.num_velocity_bins,
             )
         else:
             performance = note_seq.Performance(
                 note_seq.quantize_note_sequence_absolute(
                     ns,
-                    self._steps_per_second),
-                num_velocity_bins=self._num_velocity_bins
+                    self.steps_per_second),
+                num_velocity_bins=self.num_velocity_bins
             )
 
         event_ids = [self.token_sos]
@@ -76,7 +76,7 @@ class MidiEncoder:
                     current_step += 1
                     if self.encode_metrics:
                         emit_metric_events()
-            id = self._encoding.encode_event(event) + self.num_reserved_ids
+            id = self.encoding.encode_event(event) + self.num_reserved_ids
             if id > 0:
                 event_ids.append(id)
 
@@ -89,20 +89,20 @@ class MidiEncoder:
         assert(max(ids) < self.vocab_size)
         assert(min(ids) >= 0)
 
-        if self._steps_per_quarter:
+        if self.steps_per_quarter:
             performance = note_seq.MetricPerformance(
-                steps_per_quarter=self._steps_per_quarter,
+                steps_per_quarter=self.steps_per_quarter,
                 num_velocity_bins=self._num_velocity_bins
             )
         else:
             performance = note_seq.Performance(
-                steps_per_second=self._steps_per_second,
+                steps_per_second=self.steps_per_second,
                 num_velocity_bins=self._num_velocity_bins
             )
 
         for i in ids:
             if i >= self.num_reserved_ids:
-                performance.append(self._encoding.decode_event(
+                performance.append(self.encoding.decode_event(
                     i - self.num_reserved_ids))
 
         return performance.to_sequence()
