@@ -16,8 +16,8 @@ class MidiEncoder:
     def __init__(
         self, 
         num_velocity_bins, 
-        min_pitch, 
-        max_pitch, 
+        min_pitch=21,
+        max_pitch=108, 
         steps_per_quarter=None, 
         steps_per_second=None, 
         encode_metrics=True
