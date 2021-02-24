@@ -14,23 +14,20 @@ import utils
 
 
 def process_midi(seq, max_seq, token_pad):
-    full_seq = max_seq + 1  # Performing seq2seq
-
-    if len(seq) < max_seq:
+    if len(seq) <= max_seq :
         x = torch.full((max_seq, ), token_pad, dtype=torch.long)
         tgt = torch.full((max_seq, ), token_pad, dtype=torch.long)
         x[:len(seq)] = seq
         tgt[:len(seq) - 1] = seq[1:]
     else:
         try:
-            start = random.randint(0, len(seq) - full_seq)
-        except ValueError as _:
+            start = random.randint(0, len(seq) - max_seq - 1)
+        except ValueError:
             start = 0
-        end = start + full_seq
+        end = start + max_seq + 1
         data = seq[start:end]
         x = data[:max_seq]
-        tgt = data[1:full_seq]
-
+        tgt = data[1:max_seq + 1]
     return x, tgt
 
 
