@@ -92,12 +92,12 @@ class MidiEncoder:
         if self.steps_per_quarter:
             performance = note_seq.MetricPerformance(
                 steps_per_quarter=self.steps_per_quarter,
-                num_velocity_bins=self._num_velocity_bins
+                num_velocity_bins=self.num_velocity_bins
             )
         else:
             performance = note_seq.Performance(
                 steps_per_second=self.steps_per_second,
-                num_velocity_bins=self._num_velocity_bins
+                num_velocity_bins=self.num_velocity_bins
             )
 
         for i in ids:
