@@ -86,7 +86,7 @@ class Trainer:
         if self.epoch == 0:
             last_step = -1
         else:
-            last_step = self.epoch * len(self.train_loader),
+            last_step = self.epoch * len(self.train_loader)
         scheduler = OneCycleLR(
             self.optimizer,
             max_lr=max_lr,
