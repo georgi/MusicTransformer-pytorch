@@ -4,6 +4,7 @@ import pretty_midi
 from note_seq.sequences_lib import (
     transpose_note_sequence,
     apply_sustain_control_changes,
+    split_note_sequence_on_silence
 )
 from note_seq import PerformanceOneHotEncoding
 from utils import find_files_by_extensions
@@ -114,13 +115,16 @@ class MidiEncoder:
                 midi.instruments.remove(inst)
         ns = midi_to_note_sequence(midi)
         ns = apply_sustain_control_changes(ns)
+        # delete out ouf bound notes
         ns, _ = transpose_note_sequence(ns, 0, self.min_pitch, self.max_pitch)
         del ns.control_changes[:]
-        return ns
-    
+        return split_note_sequence_on_silence(ns)
+
     def load_midi_folder(self, folder):
         files = list(find_files_by_extensions(folder, ['.mid', '.midi']))
+        res = []
         with ThreadPoolExecutor(max_workers=10) as executor:
             futures = [executor.submit(self.load_midi, f) for f in files]
-            return [future.result() for future in tqdm(futures)]
-
+            for future in tqdm(futures):
+                res.extend(future.result())
+        return res

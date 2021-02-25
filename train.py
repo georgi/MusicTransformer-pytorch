@@ -5,7 +5,6 @@ from tqdm.notebook import tqdm
 from custom.criterion import smooth_cross_entropy
 from torch_lr_finder import LRFinder
 from torch.optim.lr_scheduler import OneCycleLR
-from torch.optim import Adam
 from torch.nn.functional import cross_entropy
 import os
 
