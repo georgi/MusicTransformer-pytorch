@@ -107,6 +107,26 @@ class MidiEncoder:
                     i - self.num_reserved_ids))
 
         return performance.to_sequence()
+    
+    def remove_duplicate_notes(self, ns):
+        notes = set()
+        dupes = []
+        for note in ns.notes:
+            key = f"{note.start_time}_{note.pitch}"
+            if key in notes:
+                dupes.append(note)
+            else:
+                notes.add(key)
+        for note in dupes:
+            ns.notes.remove(note)
+            
+    def remove_out_of_bound_notes(self, ns):
+        out_of_bounds = []
+        for note in ns.notes:
+            if note.pitch < self.min_pitch or note.pitch > self.max_pitch:
+                out_of_bounds.append(note)
+        for note in out_of_bounds:
+            ns.notes.remove(note)
 
     def load_midi(self, path):
         midi = pretty_midi.PrettyMIDI(path)
@@ -115,9 +135,10 @@ class MidiEncoder:
                 midi.instruments.remove(inst)
         ns = midi_to_note_sequence(midi)
         ns = apply_sustain_control_changes(ns)
-        # delete out ouf bound notes
-        ns, _ = transpose_note_sequence(ns, 0, self.min_pitch, self.max_pitch)
+        # after applying sustain, we don't need control changes anymore
         del ns.control_changes[:]
+        self.remove_duplicate_notes(ns)
+        self.remove_out_of_bound_notes(ns)
         return split_note_sequence_on_silence(ns)
 
     def load_midi_folder(self, folder):
