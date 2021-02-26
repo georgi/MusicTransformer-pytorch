@@ -114,13 +114,14 @@ class MidiEncoder:
         notes = set()
         dupes = []
         for note in ns.notes:
-            key = f"{note.start_time}_{note.pitch}"
+            key = f"{note.quantized_start_step}_{note.pitch}"
             if key in notes:
                 dupes.append(note)
             else:
                 notes.add(key)
         for note in dupes:
             ns.notes.remove(note)
+        return ns
 
     def remove_out_of_bound_notes(self, ns):
         out_of_bounds = []
@@ -130,19 +131,28 @@ class MidiEncoder:
         for note in out_of_bounds:
             ns.notes.remove(note)
 
+    def quantize(self, ns):
+        return self.remove_duplicate_notes(
+            quantize_note_sequence(ns, self.steps_per_quarter)
+        )
+
     def split_and_quantize(self, ns):
         res = []
-        for i in split_note_sequence_on_silence(ns):
-            for j in split_note_sequence_on_time_changes(i):
-                if self.steps_per_quarter:
-                    q = quantize_note_sequence(j, self.steps_per_quarter)
-                    res.append(q)
-                else:
-                    res.append(j)
-        return res
+        if self.steps_per_quarter:
+            return [
+                self.quantize(i)
+                for i in split_note_sequence_on_time_changes(ns)
+                if len(i.notes) > 5
+            ]
+        else:
+            return split_note_sequence_on_silence(ns)
 
     def load_midi(self, path):
-        midi = pretty_midi.PrettyMIDI(path)
+        try:
+            midi = pretty_midi.PrettyMIDI(path)
+        except Exception as e:
+            print("Failed to load MIDI file", path, e)
+            return []
         for i, inst in enumerate(midi.instruments):
             if inst.is_drum:
                 midi.instruments.remove(inst)
@@ -157,8 +167,12 @@ class MidiEncoder:
     def load_midi_folder(self, folder, max_workers=8):
         files = list(find_files_by_extensions(folder, ['.mid', '.midi']))
         res = []
-        with ProcessPoolExecutor(max_workers=max_workers) as executor:
-            futures = [executor.submit(self.load_midi, f) for f in files]
-            for future in tqdm(futures):
-                res.extend(future.result())
+        if max_workers == 0:
+            for f in tqdm(files):
+                res.extend(self.load_midi(f))
+        else:
+            with ProcessPoolExecutor(max_workers=max_workers) as executor:
+                futures = [executor.submit(self.load_midi, f) for f in files]
+                for future in tqdm(futures):
+                    res.extend(future.result())
         return res
