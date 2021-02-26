@@ -19,7 +19,7 @@ def find_files_by_extensions(root, exts=[]):
                 yield os.path.join(path, name)
 
 
-def sample(model, sample_length, prime_sequence, device, temperature=1):
+def sample(model, sample_length, prime_sequence, device, temperature=1, k=10):
     model.eval()
     input_sequence = prime_sequence.copy()
     input_tensor = torch.LongTensor(input_sequence).unsqueeze(0).to(device)
@@ -27,7 +27,7 @@ def sample(model, sample_length, prime_sequence, device, temperature=1):
     for i in tqdm(range(sample_length)):
         out = model(input_tensor)[0, -1, :]
         probs = F.softmax(out / temperature, dim=0)
-        top = torch.topk(probs, 5)
+        top = torch.topk(probs, k)
         for i in range(len(probs)):
             if i not in top.indices:
                 probs[i] = 0
