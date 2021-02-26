@@ -11,7 +11,7 @@ from note_seq.sequences_lib import (
 from note_seq import PerformanceOneHotEncoding
 from utils import find_files_by_extensions
 from tqdm.notebook import tqdm
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor
 
 
 class MidiEncoder:
@@ -154,10 +154,10 @@ class MidiEncoder:
         self.remove_out_of_bound_notes(ns)
         return self.split_and_quantize(ns)
 
-    def load_midi_folder(self, folder):
+    def load_midi_folder(self, folder, max_workers=8):
         files = list(find_files_by_extensions(folder, ['.mid', '.midi']))
         res = []
-        with ThreadPoolExecutor(max_workers=10) as executor:
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
             futures = [executor.submit(self.load_midi, f) for f in files]
             for future in tqdm(futures):
                 res.extend(future.result())
