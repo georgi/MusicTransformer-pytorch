@@ -51,29 +51,15 @@ def data_loaders(
     data_files = midi_encoder.load_midi_folder(data_dir)
     train_files, valid_files = train_test_split(data_files)
 
-    def quantize(seqs):
-        if midi_encoder.steps_per_quarter is None:
-            return seqs
-        res = []
-        for ns in seqs:
-            try:
-                res.append(note_seq.quantize_note_sequence(
-                    ns, midi_encoder.steps_per_quarter))
-            except note_seq.MultipleTimeSignatureError:
-                pass
-            except note_seq.MultipleTempoError:
-                pass
-        return res
-
     train_data = SequenceDataset(
-        sequences=quantize(train_files),
+        sequences=train_files,
         seq_length=max_seq,
         midi_encoder=midi_encoder,
         time_augment=time_augment,
         transpose_augment=transpose_augment
     )
     valid_data = SequenceDataset(
-        sequences=quantize(valid_files),
+        sequences=valid_files,
         seq_length=max_seq,
         midi_encoder=midi_encoder,
         time_augment=0,

@@ -4,7 +4,9 @@ import pretty_midi
 from note_seq.sequences_lib import (
     transpose_note_sequence,
     apply_sustain_control_changes,
-    split_note_sequence_on_silence
+    split_note_sequence_on_silence,
+    split_note_sequence_on_time_changes,
+    quantize_note_sequence
 )
 from note_seq import PerformanceOneHotEncoding
 from utils import find_files_by_extensions
@@ -15,12 +17,12 @@ from concurrent.futures import ThreadPoolExecutor
 class MidiEncoder:
 
     def __init__(
-        self, 
-        num_velocity_bins, 
+        self,
+        num_velocity_bins,
         min_pitch=21,
-        max_pitch=108, 
-        steps_per_quarter=None, 
-        steps_per_second=None, 
+        max_pitch=108,
+        steps_per_quarter=None,
+        steps_per_second=None,
         encode_metrics=True
     ):
         self.steps_per_second = steps_per_second
@@ -67,7 +69,7 @@ class MidiEncoder:
                 event_ids.append(self.token_bar)
             elif current_step % steps_per_beat == 0:
                 event_ids.append(self.token_beat)
-                
+
         if self.encode_metrics:
             emit_metric_events()
 
@@ -107,7 +109,7 @@ class MidiEncoder:
                     i - self.num_reserved_ids))
 
         return performance.to_sequence()
-    
+
     def remove_duplicate_notes(self, ns):
         notes = set()
         dupes = []
@@ -119,7 +121,7 @@ class MidiEncoder:
                 notes.add(key)
         for note in dupes:
             ns.notes.remove(note)
-            
+
     def remove_out_of_bound_notes(self, ns):
         out_of_bounds = []
         for note in ns.notes:
@@ -127,6 +129,17 @@ class MidiEncoder:
                 out_of_bounds.append(note)
         for note in out_of_bounds:
             ns.notes.remove(note)
+
+    def split_and_quantize(self, ns):
+        res = []
+        for i in split_note_sequence_on_silence(ns):
+            for j in split_note_sequence_on_time_changes(i):
+                if self.steps_per_quarter:
+                    q = quantize_note_sequence(j, self.steps_per_quarter)
+                    res.append(q)
+                else:
+                    res.append(j)
+        return res
 
     def load_midi(self, path):
         midi = pretty_midi.PrettyMIDI(path)
@@ -139,7 +152,7 @@ class MidiEncoder:
         del ns.control_changes[:]
         self.remove_duplicate_notes(ns)
         self.remove_out_of_bound_notes(ns)
-        return split_note_sequence_on_silence(ns)
+        return self.split_and_quantize(ns)
 
     def load_midi_folder(self, folder):
         files = list(find_files_by_extensions(folder, ['.mid', '.midi']))
