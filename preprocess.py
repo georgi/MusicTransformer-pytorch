@@ -8,7 +8,11 @@ from note_seq.sequences_lib import (
     split_note_sequence_on_time_changes,
     quantize_note_sequence
 )
-from note_seq import PerformanceOneHotEncoding
+from note_seq.chord_inference import infer_chords_for_sequence
+from note_seq import (
+    PerformanceOneHotEncoding, 
+    TriadChordOneHotEncoding
+)
 from utils import find_files_by_extensions
 from tqdm.notebook import tqdm
 from concurrent.futures import ProcessPoolExecutor
@@ -23,7 +27,6 @@ class MidiEncoder:
         max_pitch=108,
         steps_per_quarter=None,
         steps_per_second=None,
-        encode_metrics=True
     ):
         self.steps_per_second = steps_per_second
         self.steps_per_quarter = steps_per_quarter
@@ -35,14 +38,16 @@ class MidiEncoder:
             min_pitch=min_pitch,
             max_pitch=max_pitch
         )
-        self.encode_metrics = encode_metrics
-        self.num_reserved_ids = 5
-        self.vocab_size = self.encoding.num_classes + self.num_reserved_ids + 1
+        self.chord_encoding = TriadChordOneHotEncoding()
+        self.num_reserved_ids = 4
+        self.vocab_size = \
+            self.encoding.num_classes + \
+            self.chord_encoding.num_classes + \
+            self.num_reserved_ids
         self.token_pad = 0
         self.token_sos = 1
         self.token_eos = 2
         self.token_bar = 3
-        self.token_beat = 4
 
     def encode_note_sequence(self, ns):
         if self.steps_per_quarter:
@@ -58,27 +63,38 @@ class MidiEncoder:
                 num_velocity_bins=self.num_velocity_bins
             )
 
+        chords = {}
+        for a in ns.text_annotations:
+            if a.annotation_type == 1:
+                chords[a.quantized_step] = a.text
+
         event_ids = [self.token_sos]
         current_step = 0
-        ts = ns.time_signatures[0]
-        steps_per_beat = ts.numerator
-        steps_per_bar = ts.numerator * ts.denominator
+        if len(ns.time_signatures) > 0:
+            ts = ns.time_signatures[0]
+            steps_per_bar = ts.numerator * self.steps_per_quarter
+        else:
+            steps_per_bar = 16
 
-        def emit_metric_events():
+        def emit_meta_events():
             if current_step % steps_per_bar == 0:
                 event_ids.append(self.token_bar)
-            elif current_step % steps_per_beat == 0:
-                event_ids.append(self.token_beat)
+            if current_step in chords:
+                chord = chords[current_step]
+                chord_id = self.chord_encoding.encode_event(chord)
+                event_id = self.num_reserved_ids + self.encoding.num_classes + \
+                    chord_id
+                event_ids.append(event_id)
 
-        if self.encode_metrics:
-            emit_metric_events()
+        if self.steps_per_quarter:
+            emit_meta_events()
 
         for event in performance:
             if event.event_type == note_seq.PerformanceEvent.TIME_SHIFT:
                 for _ in range(event.event_value):
                     current_step += 1
-                    if self.encode_metrics:
-                        emit_metric_events()
+                    if self.steps_per_quarter:
+                        emit_meta_events()
             id = self.encoding.encode_event(event) + self.num_reserved_ids
             if id > 0:
                 event_ids.append(id)
@@ -104,7 +120,7 @@ class MidiEncoder:
             )
 
         for i in ids:
-            if i >= self.num_reserved_ids:
+            if i >= self.num_reserved_ids and i < self.num_reserved_ids + self.encoding.num_classes:
                 performance.append(self.encoding.decode_event(
                     i - self.num_reserved_ids))
 
@@ -136,13 +152,19 @@ class MidiEncoder:
             quantize_note_sequence(ns, self.steps_per_quarter)
         )
 
+    def infer_chords(self, ns):
+        try:
+            infer_chords_for_sequence(ns)
+        except:
+            pass
+        return ns
+
     def split_and_quantize(self, ns):
-        res = []
         if self.steps_per_quarter:
             return [
-                self.quantize(i)
+                self.infer_chords(self.quantize(i))
                 for i in split_note_sequence_on_time_changes(ns)
-                if len(i.notes) > 5
+                if len(i.notes) > 32
             ]
         else:
             return split_note_sequence_on_silence(ns)
