@@ -1,7 +1,6 @@
 import random
 import torch
 from random import randrange, uniform
-import note_seq
 from torch.utils.data import DataLoader
 from note_seq.sequences_lib import (
     stretch_note_sequence,
@@ -39,11 +38,11 @@ def train_test_split(dataset, split=0.90):
 
 
 def data_loaders(
-    midi_encoder, 
-    data_dir, 
-    batch_size, 
-    max_seq, 
-    time_augment, 
+    midi_encoder,
+    data_dir,
+    batch_size,
+    max_seq,
+    time_augment,
     transpose_augment,
     num_workers=8
 ):
@@ -74,11 +73,11 @@ def data_loaders(
 
 class SequenceDataset(torch.utils.data.Dataset):
     def __init__(
-        self, 
-        sequences, 
-        seq_length, 
-        midi_encoder, 
-        time_augment, 
+        self,
+        sequences,
+        seq_length,
+        midi_encoder,
+        time_augment,
         transpose_augment
     ):
         self.sequences = sequences
@@ -98,7 +97,7 @@ class SequenceDataset(torch.utils.data.Dataset):
         if self.time_augment > 0:
             try:
                 stretch_factor = uniform(
-                    1.0 - self.time_augment, 
+                    1.0 - self.time_augment,
                     1.0 + self.time_augment
                 )
                 ns = stretch_note_sequence(ns, stretch_factor)
@@ -114,9 +113,5 @@ class SequenceDataset(torch.utils.data.Dataset):
 
     def _get_seq(self, ns):
         data = torch.tensor(self.encode(self.augment(ns)))
-        data = process_midi(
-            data,
-            self.seq_length,
-            self.midi_encoder.token_pad,
-        )
+        data = process_midi(data, self.seq_length, 0)
         return data
