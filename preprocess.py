@@ -270,8 +270,8 @@ class MIDISongEncoder(MIDIEncoder):
         ns = apply_sustain_control_changes(ns)
         # after applying sustain, we don't need control changes anymore
         del ns.control_changes[:]
-        self.remove_out_of_bound_notes(ns)
-        return self.split_and_quantize(ns)
+        # self.remove_out_of_bound_notes(ns)
+        return [ns]
 
 
 class MIDIPerformanceEncoder(MIDIEncoder):
