@@ -46,20 +46,23 @@ class Event:
         self.instrument = instrument
         self.event_value = event_value
 
+        if instrument == Event.BASS:
+            while self.event_value < Encoding.MIN_NOTE:
+                self.event_value += 12
+            while self.event_value > Encoding.MAX_BASS:
+                self.event_value -= 12
+
+        if instrument in (Event.MELODY, Event.OTHER):
+            while self.event_value < Encoding.MIN_NOTE:
+                self.event_value += 12
+            while self.event_value > Encoding.MAX_NOTE:
+                self.event_value -= 12
+
         if event_type == Event.TIME_SHIFT:
-            assert(event_value >= 0 and event_value < 128)
+            assert(event_value > 0 and event_value < Encoding.MAX_SHIFT)
 
         if event_type == Event.CHORD:
-            assert(event_value >= 0 and event_value <= 48)
-
-        if instrument == Event.BASS:
-            self.event_value = event_value % 12
-
-        if instrument == Event.MELODY:
-            self.event_value = (event_value - 48) % 48
-
-        if instrument == Event.OTHER:
-            self.event_value = (event_value - 36) % 48
+            assert(event_value >= 0 and event_value <= Encoding.MAX_CHORD)
 
         assert(event_type in (Event.PAD, Event.BAR, Event.START,
                               Event.END, Event.NOTE_ON, Event.NOTE_OFF,
@@ -67,39 +70,32 @@ class Event:
         if instrument:
             assert(instrument in (Event.BASS, Event.MELODY, Event.OTHER))
 
-    @ property
-    def pitch(self):
-        if self.instrument == Event.BASS:
-            return self.event_value + 24
-
-        if self.instrument == Event.MELODY:
-            return self.event_value + 48
-
-        if self.instrument == Event.OTHER:
-            return self.event_value + 36
-
     def __repr__(self):
         return f"<Event {self.event_type} {self.event_value} {self.instrument}>"
 
 
 class Encoding:
+    MIN_NOTE = 21
+    MAX_NOTE = 108
+    MAX_BASS = 48
+    MAX_SHIFT = 128
+    MAX_CHORD = 48
 
-    def __init__(self, max_shift_steps=64):
+    def __init__(self):
         self._event_ranges = [
-            (Event.PAD, None, 0, 1),
-            (Event.START, None, 0, 1),
-            (Event.END, None, 0, 1),
-            (Event.BAR, None, 0, 1),
+            (Event.PAD, None, 0, 0),
+            (Event.START, None, 0, 0),
+            (Event.END, None, 0, 0),
+            (Event.BAR, None, 0, 0),
             (Event.CHORD, None, 0, 48),
-            (Event.NOTE_ON, Event.BASS, 0, 12),
-            (Event.NOTE_OFF, Event.BASS, 0, 12),
-            (Event.NOTE_ON, Event.MELODY, 0, 48),
-            (Event.NOTE_OFF, Event.MELODY, 0, 48),
-            (Event.NOTE_ON, Event.OTHER, 0, 48),
-            (Event.NOTE_OFF, Event.OTHER, 0, 48),
-            (Event.TIME_SHIFT, None, 1, max_shift_steps)
+            (Event.NOTE_ON, Event.BASS, Encoding.MIN_NOTE, Encoding.MAX_BASS),
+            (Event.NOTE_OFF, Event.BASS, Encoding.MIN_NOTE, Encoding.MAX_BASS),
+            (Event.NOTE_ON, Event.MELODY, Encoding.MIN_NOTE, Encoding.MAX_NOTE),
+            (Event.NOTE_OFF, Event.MELODY, Encoding.MIN_NOTE, Encoding.MAX_NOTE),
+            (Event.NOTE_ON, Event.OTHER, Encoding.MIN_NOTE, Encoding.MAX_NOTE),
+            (Event.NOTE_OFF, Event.OTHER, Encoding.MIN_NOTE, Encoding.MAX_NOTE),
+            (Event.TIME_SHIFT, None, 1, Encoding.MAX_SHIFT),
         ]
-        self._max_shift_steps = max_shift_steps
 
     @ property
     def num_classes(self):
@@ -161,6 +157,19 @@ class MIDISongEncoder(MIDIEncoder):
             infer_chords_for_sequence(ns)
         except Exception:
             pass
+        return ns
+
+    def remove_duplicate_notes(self, ns):
+        notes = set()
+        dupes = []
+        for note in ns.notes:
+            key = f"{note.quantized_start_step}_{note.pitch}"
+            if key in notes:
+                dupes.append(note)
+            else:
+                notes.add(key)
+        for note in dupes:
+            ns.notes.remove(note)
         return ns
 
     def encode_note_sequence(self, ns, max_shift_steps=1000):
@@ -267,17 +276,17 @@ class MIDISongEncoder(MIDIEncoder):
                     note.end_time = step * seconds_per_step
                     if note.end_time - note.start_time > max_note_duration:
                         note.end_time = note.start_time + max_note_duration
-                    note.pitch = event.pitch
+                    note.pitch = event.event_value
                     note.velocity = velocity
                     if event.instrument == Event.BASS:
                         note.instrument = 0
-                        note.program = 32
+                        note.program = 33
                     if event.instrument == Event.MELODY:
                         note.instrument = 1
-                        note.program = 1
+                        note.program = 0
                     if event.instrument == Event.OTHER:
                         note.instrument = 2
-                        note.program = 16
+                        note.program = 8
                     note.is_drum = False
                     if note.end_time > sequence.total_time:
                         sequence.total_time = note.end_time
@@ -373,7 +382,7 @@ class MIDIPerformanceEncoder(MIDIEncoder):
 
 if __name__ == '__main__':
     midi_encoder = MIDISongEncoder(4)
-    midi_dir = "/Users/mmg/uni/midi/beatles/"
+    midi_dir = "/Users/mmg/uni/midi/final_fantasy/"
     for f in os.listdir(midi_dir):
         print(f)
         midi_file = os.path.join(midi_dir, f)
