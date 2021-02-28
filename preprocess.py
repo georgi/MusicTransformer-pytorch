@@ -33,11 +33,13 @@ class Event:
     BAR = 'bar'
     START = 'start'
     END = 'end'
+    CHORD = 'chord'
     NOTE_ON = 'note_on'
     NOTE_OFF = 'note_off'
     TIME_SHIFT = 'time_shift'
-    BASS = '__BASS__'
-    MELODY = '__MELODY__'
+    BASS = 'bass'
+    MELODY = 'melody'
+    OTHER = 'other'
 
     def __init__(self, event_type, event_value=0, instrument=None):
         self.event_type = event_type
@@ -45,7 +47,10 @@ class Event:
         self.event_value = event_value
 
         if event_type == Event.TIME_SHIFT:
-            assert(event_value >= 0 and event_value < 64)
+            assert(event_value >= 0 and event_value < 128)
+
+        if event_type == Event.CHORD:
+            assert(event_value >= 0 and event_value <= 48)
 
         if instrument == Event.BASS:
             self.event_value = event_value % 12
@@ -53,19 +58,25 @@ class Event:
         if instrument == Event.MELODY:
             self.event_value = (event_value - 48) % 48
 
+        if instrument == Event.OTHER:
+            self.event_value = (event_value - 36) % 48
+
         assert(event_type in (Event.PAD, Event.BAR, Event.START,
                               Event.END, Event.NOTE_ON, Event.NOTE_OFF,
                               Event.TIME_SHIFT))
         if instrument:
-            assert(instrument in (Event.BASS, Event.MELODY))
+            assert(instrument in (Event.BASS, Event.MELODY, Event.OTHER))
 
-    @property
+    @ property
     def pitch(self):
         if self.instrument == Event.BASS:
             return self.event_value + 24
 
         if self.instrument == Event.MELODY:
             return self.event_value + 48
+
+        if self.instrument == Event.OTHER:
+            return self.event_value + 36
 
     def __repr__(self):
         return f"<Event {self.event_type} {self.event_value} {self.instrument}>"
@@ -79,10 +90,13 @@ class Encoding:
             (Event.START, None, 0, 1),
             (Event.END, None, 0, 1),
             (Event.BAR, None, 0, 1),
+            (Event.CHORD, None, 0, 48),
             (Event.NOTE_ON, Event.BASS, 0, 12),
             (Event.NOTE_OFF, Event.BASS, 0, 12),
-            (Event.NOTE_ON, Event.MELODY, 0, 36),
-            (Event.NOTE_OFF, Event.MELODY, 0, 36),
+            (Event.NOTE_ON, Event.MELODY, 0, 48),
+            (Event.NOTE_OFF, Event.MELODY, 0, 48),
+            (Event.NOTE_ON, Event.OTHER, 0, 48),
+            (Event.NOTE_OFF, Event.OTHER, 0, 48),
             (Event.TIME_SHIFT, None, 1, max_shift_steps)
         ]
         self._max_shift_steps = max_shift_steps
@@ -141,7 +155,6 @@ class MIDISongEncoder(MIDIEncoder):
         self.steps_per_quarter = steps_per_quarter
         self.encoding = Encoding()
         self.vocab_size = self.encoding.num_classes
-        # self.chord_encoding = TriadChordOneHotEncoding()
 
     def infer_chords(self, ns):
         try:
@@ -168,8 +181,12 @@ class MIDISongEncoder(MIDIEncoder):
             for v in pitch_by_instr.values()
         ]
 
-        melody_inst = list(pitch_by_instr.keys())[np.argmax(mean_pitch)]
-        bass_inst = list(pitch_by_instr.keys())[np.argmin(mean_pitch)]
+        if len(mean_pitch) > 0:
+            melody_inst = list(pitch_by_instr.keys())[np.argmax(mean_pitch)]
+            bass_inst = list(pitch_by_instr.keys())[np.argmin(mean_pitch)]
+        else:
+            melody_inst = 0
+            bass_inst = 1
 
         sorted_notes = sorted(ns.notes, key=lambda note: (
             note.start_time, note.pitch))
@@ -196,14 +213,19 @@ class MIDISongEncoder(MIDIEncoder):
                 events.append(
                     Event(Event.TIME_SHIFT, int(step - current_step)))
                 current_step = step
+            if step in chords:
+                value = self.chord_encoding.encode_event(chords[step])
+                events.append(Event(Event.CHORD, value))
             # Add a performance event for this note on/off.
             event_type = Event.NOTE_OFF if is_offset else Event.NOTE_ON
             note = sorted_notes[idx]
 
             if note.instrument == bass_inst:
                 events.append(Event(event_type, note.pitch, Event.BASS))
-            if note.instrument == melody_inst:
+            elif note.instrument == melody_inst:
                 events.append(Event(event_type, note.pitch, Event.MELODY))
+            elif not note.is_drum:
+                events.append(Event(event_type, note.pitch, Event.OTHER))
 
         events.append(Event(Event.END))
 
@@ -253,6 +275,9 @@ class MIDISongEncoder(MIDIEncoder):
                     if event.instrument == Event.MELODY:
                         note.instrument = 1
                         note.program = 1
+                    if event.instrument == Event.OTHER:
+                        note.instrument = 2
+                        note.program = 16
                     note.is_drum = False
                     if note.end_time > sequence.total_time:
                         sequence.total_time = note.end_time
@@ -271,7 +296,12 @@ class MIDISongEncoder(MIDIEncoder):
         # after applying sustain, we don't need control changes anymore
         del ns.control_changes[:]
         # self.remove_out_of_bound_notes(ns)
-        return [ns]
+        # ns = quantize_note_sequence(ns, self.steps_per_quarter)
+        return [
+            self.infer_chords(quantize_note_sequence(
+                i, self.steps_per_quarter))
+            for i in split_note_sequence_on_time_changes(ns)
+        ]
 
 
 class MIDIPerformanceEncoder(MIDIEncoder):
@@ -343,10 +373,14 @@ class MIDIPerformanceEncoder(MIDIEncoder):
 
 if __name__ == '__main__':
     midi_encoder = MIDISongEncoder(4)
-    f = "/Users/mmg/uni/midi/beatles/Beatles_And_I_Love_Her.mid"
-    midi = pretty_midi.PrettyMIDI(f)
-    ns = midi_to_note_sequence(midi)
-    ns = quantize_note_sequence(ns, 4)
-    ids = midi_encoder.encode_note_sequence(ns)
-    out = midi_encoder.decode_ids(ids)
-    note_sequence_to_midi_file(out, os.path.basename(f))
+    midi_dir = "/Users/mmg/uni/midi/beatles/"
+    for f in os.listdir(midi_dir):
+        print(f)
+        midi_file = os.path.join(midi_dir, f)
+        midi = pretty_midi.PrettyMIDI(midi_file)
+        ns = midi_to_note_sequence(midi)
+        ns = split_note_sequence_on_time_changes(ns)[0]
+        ns = quantize_note_sequence(ns, 4)
+        ids = midi_encoder.encode_note_sequence(ns)
+        out = midi_encoder.decode_ids(ids)
+        note_sequence_to_midi_file(out, os.path.join('out', f))
