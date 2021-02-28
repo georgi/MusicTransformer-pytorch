@@ -9,20 +9,15 @@ from note_seq.protobuf import music_pb2
 import pretty_midi
 from note_seq.sequences_lib import (
     is_quantized_sequence,
-    transpose_note_sequence,
     apply_sustain_control_changes,
     split_note_sequence_on_silence,
     split_note_sequence_on_time_changes,
     quantize_note_sequence,
     quantize_note_sequence_absolute
 )
-from note_seq.chord_inference import infer_chords_for_sequence
 from note_seq import (
     PerformanceOneHotEncoding,
-    TriadChordOneHotEncoding,
     Performance,
-    MetricPerformance,
-    PerformanceEvent
 )
 from utils import find_files_by_extensions
 from tqdm.notebook import tqdm
@@ -30,10 +25,10 @@ from concurrent.futures import ThreadPoolExecutor
 
 
 class Event:
-    # CHORD = 'chord'
     NOTE_ON = 'note_on'
     NOTE_OFF = 'note_off'
     TIME_SHIFT = 'time_shift'
+    PROGRAM = 'program'
 
     def __init__(self, event_type, event_value=0, instrument=0):
         self.event_type = event_type
@@ -41,9 +36,13 @@ class Event:
         self.event_value = event_value
 
         if event_type == Event.TIME_SHIFT:
-            assert(event_value > 0 and event_value <= t  Encoding.MAX_SHIFT)
+            assert(event_value > 0 and event_value <= Encoding.MAX_SHIFT)
 
-        assert(event_type in (Event.NOTE_ON, Event.NOTE_OFF, Event.TIME_SHIFT))
+        if event_type == Event.PROGRAM:
+            assert(event_value >= 0 and event_value <= 127)
+
+        assert(event_type in (Event.NOTE_ON, Event.NOTE_OFF,
+                              Event.TIME_SHIFT, Event.PROGRAM))
         assert(instrument >= 0 and instrument < Encoding.MAX_INSTRUMENTS)
 
     def __repr__(self):
@@ -62,6 +61,7 @@ class Encoding:
         ]
         for i in range(Encoding.MAX_INSTRUMENTS):
             self._event_ranges.extend([
+                (Event.PROGRAM, i, 0, 127),
                 (Event.NOTE_ON, i, Encoding.MIN_NOTE, Encoding.MAX_NOTE),
                 (Event.NOTE_OFF, i, Encoding.MIN_NOTE, Encoding.MAX_NOTE),
             ])
@@ -157,6 +157,8 @@ class MIDIMetricEncoder(MIDIEncoder):
     def encode_note_sequence(self, ns):
         assert(is_quantized_sequence(ns))
 
+        programs = {}
+
         pitch_by_instr = defaultdict(list)
         for note in ns.notes:
             if not note.is_drum:
@@ -194,9 +196,15 @@ class MIDIMetricEncoder(MIDIEncoder):
                 current_step = step
             event_type = Event.NOTE_OFF if is_offset else Event.NOTE_ON
             note = sorted_notes[idx]
-            if not note.is_drum:
-                instr_index = instruments.index(note.instrument)
+            if note.is_drum:
+                events.append(Event(event_type, note.pitch, 0))
+            else:
+                instr_index = instruments.index(note.instrument) + 1
                 if instr_index < Encoding.MAX_INSTRUMENTS:
+                    if instr_index not in programs and note.program:
+                        programs[instr_index] = note.program
+                        events.append(
+                            Event(Event.PROGRAM, note.program, instr_index))
                     events.append(Event(event_type, note.pitch, instr_index))
 
         return [self.token_sos] + [
@@ -215,6 +223,7 @@ class MIDIMetricEncoder(MIDIEncoder):
         step = 0
         velocity = 100
         max_note_duration = 10
+        programs = {}
 
         # Map pitch to list because one pitch may be active multiple times.
         pitch_start_steps = defaultdict(list)
@@ -241,13 +250,16 @@ class MIDIMetricEncoder(MIDIEncoder):
                         note.end_time = note.start_time + max_note_duration
                     note.pitch = event.event_value
                     note.velocity = velocity
-                    note.instrument = 0
-                    note.program = 0
-                    note.is_drum = False
+                    note.instrument = event.instrument
+                    if event.instrument in programs:
+                        note.program = programs[event.instrument]
+                    note.is_drum = event.instrument == 0
                     if note.end_time > sequence.total_time:
                         sequence.total_time = note.end_time
             elif event.event_type == Event.TIME_SHIFT:
                 step += event.event_value
+            elif event.event_type == Event.PROGRAM:
+                programs[event.instrument] = event.event_value
         return sequence
 
     def load_midi(self, path):
@@ -256,12 +268,7 @@ class MIDIMetricEncoder(MIDIEncoder):
         except Exception as e:
             print("Failed to load MIDI file", path, e)
             return []
-        for i, inst in enumerate(midi.instruments):
-            if inst.is_drum:
-                midi.instruments.remove(inst)
         ns = midi_to_note_sequence(midi)
-        ns = apply_sustain_control_changes(ns)
-        # after applying sustain, we don't need control changes anymore
         del ns.control_changes[:]
         return self.split_and_quantize(ns)
 

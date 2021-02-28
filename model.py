@@ -39,6 +39,7 @@ class TransformerModel(nn.Module):
     ):
         super(TransformerModel, self).__init__()
         self.model_type = 'Transformer'
+        self.sequence_len = sequence_len
         self.embedding = nn.Embedding(vocab_size, d_model)
         self.pos_encoder = PositionalEncoding(d_model, dropout, sequence_len)
         self.transformer = nn.Transformer(
