@@ -21,81 +21,50 @@ from note_seq import (
     PerformanceOneHotEncoding,
     TriadChordOneHotEncoding,
     Performance,
+    MetricPerformance,
     PerformanceEvent
 )
 from utils import find_files_by_extensions
 from tqdm.notebook import tqdm
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 
 
 class Event:
-    PAD = 'pad'
-    BAR = 'bar'
-    START = 'start'
-    END = 'end'
-    CHORD = 'chord'
+    # CHORD = 'chord'
     NOTE_ON = 'note_on'
     NOTE_OFF = 'note_off'
     TIME_SHIFT = 'time_shift'
-    BASS = 'bass'
-    MELODY = 'melody'
-    OTHER = 'other'
 
-    def __init__(self, event_type, event_value=0, instrument=None):
+    def __init__(self, event_type, event_value=0, instrument=0):
         self.event_type = event_type
         self.instrument = instrument
         self.event_value = event_value
 
-        if instrument == Event.BASS:
-            while self.event_value < Encoding.MIN_NOTE:
-                self.event_value += 12
-            while self.event_value > Encoding.MAX_BASS:
-                self.event_value -= 12
-
-        if instrument in (Event.MELODY, Event.OTHER):
-            while self.event_value < Encoding.MIN_NOTE:
-                self.event_value += 12
-            while self.event_value > Encoding.MAX_NOTE:
-                self.event_value -= 12
-
         if event_type == Event.TIME_SHIFT:
-            assert(event_value > 0 and event_value < Encoding.MAX_SHIFT)
+            assert(event_value > 0 and event_value <= t  Encoding.MAX_SHIFT)
 
-        if event_type == Event.CHORD:
-            assert(event_value >= 0 and event_value <= Encoding.MAX_CHORD)
-
-        assert(event_type in (Event.PAD, Event.BAR, Event.START,
-                              Event.END, Event.NOTE_ON, Event.NOTE_OFF,
-                              Event.TIME_SHIFT))
-        if instrument:
-            assert(instrument in (Event.BASS, Event.MELODY, Event.OTHER))
+        assert(event_type in (Event.NOTE_ON, Event.NOTE_OFF, Event.TIME_SHIFT))
+        assert(instrument >= 0 and instrument < Encoding.MAX_INSTRUMENTS)
 
     def __repr__(self):
         return f"<Event {self.event_type} {self.event_value} {self.instrument}>"
 
 
 class Encoding:
-    MIN_NOTE = 21
-    MAX_NOTE = 108
-    MAX_BASS = 48
-    MAX_SHIFT = 128
-    MAX_CHORD = 48
+    MIN_NOTE = 0
+    MAX_NOTE = 127
+    MAX_SHIFT = 64
+    MAX_INSTRUMENTS = 4
 
     def __init__(self):
         self._event_ranges = [
-            (Event.PAD, None, 0, 0),
-            (Event.START, None, 0, 0),
-            (Event.END, None, 0, 0),
-            (Event.BAR, None, 0, 0),
-            (Event.CHORD, None, 0, 48),
-            (Event.NOTE_ON, Event.BASS, Encoding.MIN_NOTE, Encoding.MAX_BASS),
-            (Event.NOTE_OFF, Event.BASS, Encoding.MIN_NOTE, Encoding.MAX_BASS),
-            (Event.NOTE_ON, Event.MELODY, Encoding.MIN_NOTE, Encoding.MAX_NOTE),
-            (Event.NOTE_OFF, Event.MELODY, Encoding.MIN_NOTE, Encoding.MAX_NOTE),
-            (Event.NOTE_ON, Event.OTHER, Encoding.MIN_NOTE, Encoding.MAX_NOTE),
-            (Event.NOTE_OFF, Event.OTHER, Encoding.MIN_NOTE, Encoding.MAX_NOTE),
-            (Event.TIME_SHIFT, None, 1, Encoding.MAX_SHIFT),
+            (Event.TIME_SHIFT, 0, 1, Encoding.MAX_SHIFT),
         ]
+        for i in range(Encoding.MAX_INSTRUMENTS):
+            self._event_ranges.extend([
+                (Event.NOTE_ON, i, Encoding.MIN_NOTE, Encoding.MAX_NOTE),
+                (Event.NOTE_OFF, i, Encoding.MIN_NOTE, Encoding.MAX_NOTE),
+            ])
 
     @ property
     def num_classes(self):
@@ -127,38 +96,6 @@ class Encoding:
 
 class MIDIEncoder:
 
-    def load_midi_folder(self, folder, max_workers=8):
-        files = list(find_files_by_extensions(folder, ['.mid', '.midi']))
-        res = []
-        if max_workers == 0:
-            for f in tqdm(files):
-                res.extend(self.load_midi(f))
-        else:
-            with ProcessPoolExecutor(max_workers=max_workers) as executor:
-                futures = [executor.submit(self.load_midi, f) for f in files]
-                for future in tqdm(futures):
-                    res.extend(future.result())
-        return res
-
-
-class MIDISongEncoder(MIDIEncoder):
-
-    def __init__(
-        self,
-        steps_per_quarter=None,
-    ):
-        super(MIDISongEncoder, self).__init__()
-        self.steps_per_quarter = steps_per_quarter
-        self.encoding = Encoding()
-        self.vocab_size = self.encoding.num_classes
-
-    def infer_chords(self, ns):
-        try:
-            infer_chords_for_sequence(ns)
-        except Exception:
-            pass
-        return ns
-
     def remove_duplicate_notes(self, ns):
         notes = set()
         dupes = []
@@ -172,13 +109,53 @@ class MIDISongEncoder(MIDIEncoder):
             ns.notes.remove(note)
         return ns
 
-    def encode_note_sequence(self, ns, max_shift_steps=1000):
-        assert(is_quantized_sequence(ns))
+    def quantize(self, ns):
+        return self.remove_duplicate_notes(
+            quantize_note_sequence(ns, self.steps_per_quarter)
+        )
 
-        chords = {}
-        for a in ns.text_annotations:
-            if a.annotation_type == 0:
-                chords[a.quantized_step] = a.text
+    def split_and_quantize(self, ns):
+        if self.steps_per_quarter:
+            return [
+                self.quantize(i)
+                for i in split_note_sequence_on_time_changes(ns)
+                if len(i.notes) > 5
+            ]
+        else:
+            return split_note_sequence_on_silence(ns)
+
+    def load_midi_folder(self, folder, max_workers=20):
+        files = list(find_files_by_extensions(folder, ['.mid', '.midi']))
+        res = []
+        if max_workers == 0:
+            for f in tqdm(files):
+                res.extend(self.load_midi(f))
+        else:
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = [executor.submit(self.load_midi, f) for f in files]
+                for future in tqdm(futures):
+                    res.extend(future.result())
+        return res
+
+
+class MIDIMetricEncoder(MIDIEncoder):
+    def __init__(
+        self,
+        encoding=None,
+        steps_per_quarter=4,
+    ):
+        if encoding is None:
+            encoding = Encoding()
+        self.steps_per_quarter = steps_per_quarter
+        self.encoding = encoding
+        self.num_reserved_ids = 3
+        self.vocab_size = self.encoding.num_classes + self.num_reserved_ids
+        self.token_pad = 0
+        self.token_sos = 1
+        self.token_eos = 2
+
+    def encode_note_sequence(self, ns):
+        assert(is_quantized_sequence(ns))
 
         pitch_by_instr = defaultdict(list)
         for note in ns.notes:
@@ -186,16 +163,14 @@ class MIDISongEncoder(MIDIEncoder):
                 pitch_by_instr[note.instrument].append(note.pitch)
 
         mean_pitch = [
-            np.mean(v)
-            for v in pitch_by_instr.values()
+            (np.median(v), i)
+            for i, v in pitch_by_instr.items()
         ]
 
-        if len(mean_pitch) > 0:
-            melody_inst = list(pitch_by_instr.keys())[np.argmax(mean_pitch)]
-            bass_inst = list(pitch_by_instr.keys())[np.argmin(mean_pitch)]
-        else:
-            melody_inst = 0
-            bass_inst = 1
+        instruments = [v for k, v in sorted(mean_pitch, reverse=True)]
+
+        if len(instruments) > 0:
+            instruments = instruments[-1:] + instruments[:-1]
 
         sorted_notes = sorted(ns.notes, key=lambda note: (
             note.start_time, note.pitch))
@@ -208,40 +183,26 @@ class MIDISongEncoder(MIDIEncoder):
         note_events = sorted(onsets + offsets)
 
         current_step = 0
-        events = [
-            Event(Event.START)
-        ]
-
+        events = []
         for step, idx, is_offset in note_events:
             if step > current_step:
-                # Shift time forward from the current step to this event.
-                while step > current_step + max_shift_steps:
-                    # We need to move further than the maximum shift size.
-                    events.append(Event(Event.TIME_SHIFT, max_shift_steps))
-                    current_step += max_shift_steps
+                while step > current_step + Encoding.MAX_SHIFT:
+                    events.append(Event(Event.TIME_SHIFT, Encoding.MAX_SHIFT))
+                    current_step += Encoding.MAX_SHIFT
                 events.append(
                     Event(Event.TIME_SHIFT, int(step - current_step)))
                 current_step = step
-            if step in chords:
-                value = self.chord_encoding.encode_event(chords[step])
-                events.append(Event(Event.CHORD, value))
-            # Add a performance event for this note on/off.
             event_type = Event.NOTE_OFF if is_offset else Event.NOTE_ON
             note = sorted_notes[idx]
+            if not note.is_drum:
+                instr_index = instruments.index(note.instrument)
+                if instr_index < Encoding.MAX_INSTRUMENTS:
+                    events.append(Event(event_type, note.pitch, instr_index))
 
-            if note.instrument == bass_inst:
-                events.append(Event(event_type, note.pitch, Event.BASS))
-            elif note.instrument == melody_inst:
-                events.append(Event(event_type, note.pitch, Event.MELODY))
-            elif not note.is_drum:
-                events.append(Event(event_type, note.pitch, Event.OTHER))
-
-        events.append(Event(Event.END))
-
-        return [
-            self.encoding.encode_event(event)
+        return [self.token_sos] + [
+            self.encoding.encode_event(event) + self.num_reserved_ids
             for event in events
-        ]
+        ] + [self.token_eos]
 
     def decode_ids(self, ids):
         assert(max(ids) < self.vocab_size)
@@ -258,7 +219,9 @@ class MIDISongEncoder(MIDIEncoder):
         # Map pitch to list because one pitch may be active multiple times.
         pitch_start_steps = defaultdict(list)
         for i, idx in enumerate(ids):
-            event = self.encoding.decode_event(idx)
+            if idx < self.num_reserved_ids:
+                continue
+            event = self.encoding.decode_event(idx - self.num_reserved_ids)
             key = (event.instrument, event.event_value)
             if event.event_type == Event.NOTE_ON:
                 pitch_start_steps[key].append(step)
@@ -278,15 +241,8 @@ class MIDISongEncoder(MIDIEncoder):
                         note.end_time = note.start_time + max_note_duration
                     note.pitch = event.event_value
                     note.velocity = velocity
-                    if event.instrument == Event.BASS:
-                        note.instrument = 0
-                        note.program = 33
-                    if event.instrument == Event.MELODY:
-                        note.instrument = 1
-                        note.program = 0
-                    if event.instrument == Event.OTHER:
-                        note.instrument = 2
-                        note.program = 8
+                    note.instrument = 0
+                    note.program = 0
                     note.is_drum = False
                     if note.end_time > sequence.total_time:
                         sequence.total_time = note.end_time
@@ -300,17 +256,14 @@ class MIDISongEncoder(MIDIEncoder):
         except Exception as e:
             print("Failed to load MIDI file", path, e)
             return []
+        for i, inst in enumerate(midi.instruments):
+            if inst.is_drum:
+                midi.instruments.remove(inst)
         ns = midi_to_note_sequence(midi)
         ns = apply_sustain_control_changes(ns)
         # after applying sustain, we don't need control changes anymore
         del ns.control_changes[:]
-        # self.remove_out_of_bound_notes(ns)
-        # ns = quantize_note_sequence(ns, self.steps_per_quarter)
-        return [
-            self.infer_chords(quantize_note_sequence(
-                i, self.steps_per_quarter))
-            for i in split_note_sequence_on_time_changes(ns)
-        ]
+        return self.split_and_quantize(ns)
 
 
 class MIDIPerformanceEncoder(MIDIEncoder):
@@ -318,17 +271,18 @@ class MIDIPerformanceEncoder(MIDIEncoder):
     def __init__(
         self,
         num_velocity_bins,
-        steps_per_second=None,
+        steps_per_second,
     ):
         super(MIDIPerformanceEncoder, self).__init__()
+        self.steps_per_second = steps_per_second
         self.num_reserved_ids = 4
         self.token_pad = 0
         self.token_sos = 1
         self.token_eos = 2
         self.token_bar = 3
         self.num_velocity_bins = num_velocity_bins
-        self.vocab_size = self.encoding.num_classes + self.num_reserved_ids
         self.encoding = PerformanceOneHotEncoding(num_velocity_bins)
+        self.vocab_size = self.encoding.num_classes + self.num_reserved_ids
 
     def encode_note_sequence(self, ns):
         performance = Performance(
@@ -381,15 +335,14 @@ class MIDIPerformanceEncoder(MIDIEncoder):
 
 
 if __name__ == '__main__':
-    midi_encoder = MIDISongEncoder(4)
+    midi_encoder = MIDIMetricEncoder(Encoding(), steps_per_quarter=4)
     midi_dir = "/Users/mmg/uni/midi/final_fantasy/"
+    # midi_encoder.load_midi_folder(midi_dir, 0)
     for f in os.listdir(midi_dir):
         print(f)
         midi_file = os.path.join(midi_dir, f)
-        midi = pretty_midi.PrettyMIDI(midi_file)
-        ns = midi_to_note_sequence(midi)
-        ns = split_note_sequence_on_time_changes(ns)[0]
-        ns = quantize_note_sequence(ns, 4)
-        ids = midi_encoder.encode_note_sequence(ns)
-        out = midi_encoder.decode_ids(ids)
-        note_sequence_to_midi_file(out, os.path.join('out', f))
+        ns = midi_encoder.load_midi(midi_file)
+        if len(ns) > 0:
+            ids = midi_encoder.encode_note_sequence(ns[0])
+            out = midi_encoder.decode_ids(ids)
+            note_sequence_to_midi_file(out, os.path.join('out', f))

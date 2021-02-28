@@ -1,6 +1,4 @@
 import os
-import torch
-import torch.nn.functional as F
 from tqdm.notebook import tqdm
 
 
@@ -20,6 +18,8 @@ def find_files_by_extensions(root, exts=[]):
 
 
 def sample(model, sample_length, prime_sequence, device, temperature=1, k=10):
+    import torch
+    import torch.nn.functional as F
     model.eval()
     input_sequence = prime_sequence.copy()
     input_tensor = torch.LongTensor(input_sequence).unsqueeze(0).to(device)
