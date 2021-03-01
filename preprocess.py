@@ -13,7 +13,8 @@ from note_seq.sequences_lib import (
     split_note_sequence_on_silence,
     split_note_sequence_on_time_changes,
     quantize_note_sequence,
-    quantize_note_sequence_absolute
+    quantize_note_sequence_absolute,
+    steps_per_bar_in_quantized_sequence
 )
 from note_seq import (
     PerformanceOneHotEncoding,
@@ -28,6 +29,8 @@ class Event:
     NOTE_ON = 'note_on'
     NOTE_OFF = 'note_off'
     TIME_SHIFT = 'time_shift'
+    BAR = 'bar'
+    QUARTER = 'quarter'
 
     def __init__(self, event_type, event_value=0):
         self.event_type = event_type
@@ -35,7 +38,8 @@ class Event:
 
         if event_type == Event.TIME_SHIFT:
             assert(event_value > 0 and event_value <= Encoding.MAX_SHIFT)
-        assert(event_type in (Event.NOTE_ON, Event.NOTE_OFF, Event.TIME_SHIFT))
+        assert(event_type in (Event.NOTE_ON, Event.NOTE_OFF,
+                              Event.TIME_SHIFT, Event.BAR, Event.QUARTER))
 
     def __repr__(self):
         return f"<Event {self.event_type} {self.event_value}>"
@@ -48,6 +52,8 @@ class Encoding:
 
     def __init__(self):
         self._event_ranges = [
+            (Event.BAR, 0, 0),
+            (Event.QUARTER, 0, 0),
             (Event.TIME_SHIFT, 1, Encoding.MAX_SHIFT),
             (Event.NOTE_ON, Encoding.MIN_NOTE, Encoding.MAX_NOTE),
             (Event.NOTE_OFF, Encoding.MIN_NOTE, Encoding.MAX_NOTE),
@@ -103,6 +109,14 @@ class MIDIEncoder:
         return res
 
 
+class DummyNote:
+    def __init__(self, step, pitch, event):
+        self.quantized_start_step = step
+        self.pitch = pitch
+        self.event = event
+        self.is_drum = False
+
+
 class MIDIMetricEncoder(MIDIEncoder):
     def __init__(
         self,
@@ -136,21 +150,35 @@ class MIDIMetricEncoder(MIDIEncoder):
 
         if len(instruments) > 0:
             instruments = instruments[-1:] + instruments[:-1]
-            instruments = instruments[:3]
+            instruments = set(instruments[:3])
 
-        sorted_notes = sorted(ns.notes, key=lambda note: (
-            note.start_time, note.pitch))
+        notes = list(ns.notes)
+        last_step = max(note.quantized_start_step for note in ns.notes)
+        bars = []
+        quarters = []
+
+        for i in range(0, last_step, int(steps_per_bar_in_quantized_sequence(ns))):
+            bars.append((i, -1, 0))
+
+        for i in range(0, last_step, self.steps_per_quarter):
+            quarters.append((i, -1, 1))
+
+        sorted_notes = sorted(
+            notes, key=lambda note: (note.quantized_start_step, note.pitch))
 
         # Sort all note start and end events.
-        onsets = [(note.quantized_start_step, idx, False)
-                  for idx, note in enumerate(sorted_notes)]
-        offsets = [(note.quantized_end_step, idx, True)
-                   for idx, note in enumerate(sorted_notes)]
-        note_events = sorted(onsets + offsets)
-
+        onsets = [
+            (note.quantized_start_step, idx, 2)
+            for idx, note in enumerate(sorted_notes)
+        ]
+        offsets = [
+            (note.quantized_end_step, idx, 3)
+            for idx, note in enumerate(sorted_notes)
+        ]
+        note_events = sorted(bars + quarters + onsets + offsets)
         current_step = 0
         events = []
-        for step, idx, is_offset in note_events:
+        for step, idx, kind in note_events:
             if step > current_step:
                 while step > current_step + Encoding.MAX_SHIFT:
                     events.append(Event(Event.TIME_SHIFT, Encoding.MAX_SHIFT))
@@ -158,10 +186,16 @@ class MIDIMetricEncoder(MIDIEncoder):
                 events.append(
                     Event(Event.TIME_SHIFT, int(step - current_step)))
                 current_step = step
-            event_type = Event.NOTE_OFF if is_offset else Event.NOTE_ON
             note = sorted_notes[idx]
-            if not note.is_drum and note.instrument in instruments:
-                events.append(Event(event_type, note.pitch))
+            if note.instrument in instruments:
+                if kind == 0:
+                    events.append(Event(Event.BAR))
+                elif kind == 1:
+                    events.append(Event(Event.QUARTER))
+                elif kind == 2:
+                    events.append(Event(Event.NOTE_ON, note.pitch))
+                elif kind == 3:
+                    events.append(Event(Event.NOTE_OFF, note.pitch))
 
         ids = [self.token_sos] + [
             self.encoding.encode_event(event) + self.num_reserved_ids
