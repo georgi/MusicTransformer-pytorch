@@ -9,7 +9,6 @@ from note_seq.protobuf import music_pb2
 import pretty_midi
 from note_seq.sequences_lib import (
     is_quantized_sequence,
-    transpose_note_sequence,
     apply_sustain_control_changes,
     split_note_sequence_on_silence,
     split_note_sequence_on_time_changes,
@@ -43,8 +42,8 @@ class Event:
 
 
 class Encoding:
-    MIN_NOTE = 21
-    MAX_NOTE = 108
+    MIN_NOTE = 0
+    MAX_NOTE = 127
     MAX_SHIFT = 64
 
     def __init__(self):
@@ -83,34 +82,12 @@ class Encoding:
 
 class MIDIEncoder:
 
-    def remove_duplicate_notes(self, ns):
-        notes = set()
-        dupes = []
-        for note in ns.notes:
-            key = f"{note.quantized_start_step}_{note.pitch}"
-            if key in notes:
-                dupes.append(note)
-            else:
-                notes.add(key)
-        for note in dupes:
-            ns.notes.remove(note)
-        return ns
-
-    def quantize(self, ns):
-        return self.remove_duplicate_notes(
-            quantize_note_sequence(ns, self.steps_per_quarter)
-        )
-
     def split_and_quantize(self, ns):
-        if self.steps_per_quarter:
-            return [
-                transpose_note_sequence(self.quantize(
-                    i), 0, Encoding.MIN_NOTE, Encoding.MAX_NOTE)[0]
-                for i in split_note_sequence_on_time_changes(ns)
-                if len(i.notes) > 5
-            ]
-        else:
-            return split_note_sequence_on_silence(ns)
+        return [
+            quantize_note_sequence(i, self.steps_per_quarter)
+            for i in split_note_sequence_on_time_changes(ns)
+            if len(i.notes) > 16
+        ]
 
     def load_midi_folder(self, folder, max_workers=20):
         files = list(find_files_by_extensions(folder, ['.mid', '.midi']))
@@ -186,10 +163,14 @@ class MIDIMetricEncoder(MIDIEncoder):
             if not note.is_drum and note.instrument in instruments:
                 events.append(Event(event_type, note.pitch))
 
-        return [self.token_sos] + [
+        ids = [self.token_sos] + [
             self.encoding.encode_event(event) + self.num_reserved_ids
             for event in events
         ] + [self.token_eos]
+
+        assert(max(ids) < self.vocab_size)
+        assert(min(ids) >= 0)
+        return ids
 
     def decode_ids(self, ids, bpm=120.0, velocity=100, max_note_duration=2):
         assert(max(ids) < self.vocab_size)
