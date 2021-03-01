@@ -9,6 +9,7 @@ from note_seq.protobuf import music_pb2
 import pretty_midi
 from note_seq.sequences_lib import (
     is_quantized_sequence,
+    transpose_note_sequence,
     apply_sustain_control_changes,
     split_note_sequence_on_silence,
     split_note_sequence_on_time_changes,
@@ -28,53 +29,40 @@ class Event:
     NOTE_ON = 'note_on'
     NOTE_OFF = 'note_off'
     TIME_SHIFT = 'time_shift'
-    PROGRAM = 'program'
 
-    def __init__(self, event_type, event_value=0, instrument=0):
+    def __init__(self, event_type, event_value=0):
         self.event_type = event_type
-        self.instrument = instrument
         self.event_value = event_value
 
         if event_type == Event.TIME_SHIFT:
             assert(event_value > 0 and event_value <= Encoding.MAX_SHIFT)
-
-        if event_type == Event.PROGRAM:
-            assert(event_value >= 0 and event_value <= 127)
-
-        assert(event_type in (Event.NOTE_ON, Event.NOTE_OFF,
-                              Event.TIME_SHIFT, Event.PROGRAM))
-        assert(instrument >= 0 and instrument < Encoding.MAX_INSTRUMENTS)
+        assert(event_type in (Event.NOTE_ON, Event.NOTE_OFF, Event.TIME_SHIFT))
 
     def __repr__(self):
-        return f"<Event {self.event_type} {self.event_value} {self.instrument}>"
+        return f"<Event {self.event_type} {self.event_value}>"
 
 
 class Encoding:
-    MIN_NOTE = 0
-    MAX_NOTE = 127
+    MIN_NOTE = 21
+    MAX_NOTE = 108
     MAX_SHIFT = 64
-    MAX_INSTRUMENTS = 4
 
     def __init__(self):
         self._event_ranges = [
-            (Event.TIME_SHIFT, 0, 1, Encoding.MAX_SHIFT),
+            (Event.TIME_SHIFT, 1, Encoding.MAX_SHIFT),
+            (Event.NOTE_ON, Encoding.MIN_NOTE, Encoding.MAX_NOTE),
+            (Event.NOTE_OFF, Encoding.MIN_NOTE, Encoding.MAX_NOTE),
         ]
-        for i in range(Encoding.MAX_INSTRUMENTS):
-            self._event_ranges.extend([
-                (Event.PROGRAM, i, 0, 127),
-                (Event.NOTE_ON, i, Encoding.MIN_NOTE, Encoding.MAX_NOTE),
-                (Event.NOTE_OFF, i, Encoding.MIN_NOTE, Encoding.MAX_NOTE),
-            ])
 
     @ property
     def num_classes(self):
         return sum(max_value - min_value + 1
-                   for _, _, min_value, max_value in self._event_ranges)
+                   for _, min_value, max_value in self._event_ranges)
 
     def encode_event(self, event):
         offset = 0
-        for event_type, inst, min_value, max_value in self._event_ranges:
-            if event.event_type == event_type and event.instrument == inst:
+        for event_type,  min_value, max_value in self._event_ranges:
+            if event.event_type == event_type:
                 return offset + event.event_value - min_value
             offset += max_value - min_value + 1
 
@@ -82,12 +70,11 @@ class Encoding:
 
     def decode_event(self, index):
         offset = 0
-        for event_type, inst, min_value, max_value in self._event_ranges:
+        for event_type, min_value, max_value in self._event_ranges:
             if offset <= index <= offset + max_value - min_value:
                 return Event(
                     event_type=event_type,
                     event_value=min_value + index - offset,
-                    instrument=inst
                 )
             offset += max_value - min_value + 1
 
@@ -117,7 +104,8 @@ class MIDIEncoder:
     def split_and_quantize(self, ns):
         if self.steps_per_quarter:
             return [
-                self.quantize(i)
+                transpose_note_sequence(self.quantize(
+                    i), 0, Encoding.MIN_NOTE, Encoding.MAX_NOTE)[0]
                 for i in split_note_sequence_on_time_changes(ns)
                 if len(i.notes) > 5
             ]
@@ -157,8 +145,6 @@ class MIDIMetricEncoder(MIDIEncoder):
     def encode_note_sequence(self, ns):
         assert(is_quantized_sequence(ns))
 
-        programs = {}
-
         pitch_by_instr = defaultdict(list)
         for note in ns.notes:
             if not note.is_drum:
@@ -173,6 +159,7 @@ class MIDIMetricEncoder(MIDIEncoder):
 
         if len(instruments) > 0:
             instruments = instruments[-1:] + instruments[:-1]
+            instruments = instruments[:3]
 
         sorted_notes = sorted(ns.notes, key=lambda note: (
             note.start_time, note.pitch))
@@ -196,34 +183,22 @@ class MIDIMetricEncoder(MIDIEncoder):
                 current_step = step
             event_type = Event.NOTE_OFF if is_offset else Event.NOTE_ON
             note = sorted_notes[idx]
-            if note.is_drum:
-                events.append(Event(event_type, note.pitch, 0))
-            else:
-                instr_index = instruments.index(note.instrument) + 1
-                if instr_index < Encoding.MAX_INSTRUMENTS:
-                    if instr_index not in programs and note.program:
-                        programs[instr_index] = note.program
-                        events.append(
-                            Event(Event.PROGRAM, note.program, instr_index))
-                    events.append(Event(event_type, note.pitch, instr_index))
+            if not note.is_drum and note.instrument in instruments:
+                events.append(Event(event_type, note.pitch))
 
         return [self.token_sos] + [
             self.encoding.encode_event(event) + self.num_reserved_ids
             for event in events
         ] + [self.token_eos]
 
-    def decode_ids(self, ids):
+    def decode_ids(self, ids, bpm=120.0, velocity=100, max_note_duration=2):
         assert(max(ids) < self.vocab_size)
         assert(min(ids) >= 0)
 
         sequence = music_pb2.NoteSequence()
         sequence.ticks_per_quarter = 220
-        qpm = 120.0
-        seconds_per_step = 60.0 / (self.steps_per_quarter * qpm)
+        seconds_per_step = 60.0 / (self.steps_per_quarter * bpm)
         step = 0
-        velocity = 100
-        max_note_duration = 10
-        programs = {}
 
         # Map pitch to list because one pitch may be active multiple times.
         pitch_start_steps = defaultdict(list)
@@ -231,14 +206,13 @@ class MIDIMetricEncoder(MIDIEncoder):
             if idx < self.num_reserved_ids:
                 continue
             event = self.encoding.decode_event(idx - self.num_reserved_ids)
-            key = (event.instrument, event.event_value)
             if event.event_type == Event.NOTE_ON:
-                pitch_start_steps[key].append(step)
+                pitch_start_steps[event.event_value].append(step)
             elif event.event_type == Event.NOTE_OFF:
-                if pitch_start_steps[key]:
+                if pitch_start_steps[event.event_value]:
                     # Create a note for the pitch that is now ending.
-                    pitch_start_step = pitch_start_steps[key][0]
-                    pitch_start_steps[key] = (
+                    pitch_start_step = pitch_start_steps[event.event_value][0]
+                    pitch_start_steps[event.event_value] = (
                         pitch_start_steps[event.event_value][1:]
                     )
                     if step == pitch_start_step:
@@ -250,16 +224,13 @@ class MIDIMetricEncoder(MIDIEncoder):
                         note.end_time = note.start_time + max_note_duration
                     note.pitch = event.event_value
                     note.velocity = velocity
-                    note.instrument = event.instrument
-                    if event.instrument in programs:
-                        note.program = programs[event.instrument]
-                    note.is_drum = event.instrument == 0
+                    note.instrument = 0
+                    note.program = 0
+                    note.is_drum = False
                     if note.end_time > sequence.total_time:
                         sequence.total_time = note.end_time
             elif event.event_type == Event.TIME_SHIFT:
                 step += event.event_value
-            elif event.event_type == Event.PROGRAM:
-                programs[event.instrument] = event.event_value
         return sequence
 
     def load_midi(self, path):
