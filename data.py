@@ -55,9 +55,12 @@ def load_sequence(fname):
 
 
 def convert_midi_to_proto(midi_encoder, src, dest_dir):
-    for ns in midi_encoder.load_midi(src):
-        fname = os.path.join(dest_dir, os.path.basename(src) + '.pb')
+    res = []
+    for i, ns in enumerate(midi_encoder.load_midi(src)):
+        fname = os.path.join(dest_dir, os.path.basename(src) + f'-{i}.pb')
         save_sequence(ns, fname)
+        res.append(fname)
+    return res
 
 
 def convert_midi_to_proto_folder(midi_encoder, src_dir, dest_dir, max_workers=10):
