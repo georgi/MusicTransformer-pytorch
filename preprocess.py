@@ -156,7 +156,6 @@ class MIDIMetricEncoder(MIDIEncoder):
                     events.append(Event(Event.NOTE_OFF, note.pitch))
                 else:
                     events.append(Event(Event.NOTE_ON, note.pitch))
-        print(events)
         return events
 
     def encode_events(self, events):
