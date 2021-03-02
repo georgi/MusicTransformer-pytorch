@@ -148,6 +148,6 @@ class SequenceDataset(torch.utils.data.Dataset):
 
     def _get_seq(self, file):
         ns = load_sequence(file)
-        data = torch.tensor(self.encode(self.augment(ns))
-        data=process_midi(data, self.seq_length, 0)
+        data = torch.tensor(self.encode(self.augment(ns)))
+        data = process_midi(data, self.seq_length, 0)
         return data
