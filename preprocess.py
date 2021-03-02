@@ -20,9 +20,6 @@ from note_seq import (
     PerformanceOneHotEncoding,
     Performance,
 )
-from utils import find_files_by_extensions
-from tqdm.notebook import tqdm
-from concurrent.futures import ThreadPoolExecutor
 
 
 class Event:
@@ -94,19 +91,6 @@ class MIDIEncoder:
             for i in split_note_sequence_on_time_changes(ns)
             if len(i.notes) > 16
         ]
-
-    def load_midi_folder(self, folder, max_workers=20):
-        files = list(find_files_by_extensions(folder, ['.mid', '.midi']))
-        res = []
-        if max_workers == 0:
-            for f in tqdm(files):
-                res.extend(self.load_midi(f))
-        else:
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = [executor.submit(self.load_midi, f) for f in files]
-                for future in tqdm(futures):
-                    res.extend(future.result())
-        return res
 
 
 class DummyNote:
