@@ -27,7 +27,6 @@ class Event:
     NOTE_OFF = 'note_off'
     TIME_SHIFT = 'time_shift'
     BAR = 'bar'
-    QUARTER = 'quarter'
 
     def __init__(self, event_type, event_value=0):
         self.event_type = event_type
@@ -36,7 +35,7 @@ class Event:
         if event_type == Event.TIME_SHIFT:
             assert(event_value > 0 and event_value <= Encoding.MAX_SHIFT)
         assert(event_type in (Event.NOTE_ON, Event.NOTE_OFF,
-                              Event.TIME_SHIFT, Event.BAR, Event.QUARTER))
+                              Event.TIME_SHIFT, Event.BAR))
 
     def __repr__(self):
         return f"<Event {self.event_type} {self.event_value}>"
@@ -45,12 +44,11 @@ class Event:
 class Encoding:
     MIN_NOTE = 0
     MAX_NOTE = 127
-    MAX_SHIFT = 64
+    MAX_SHIFT = 4
 
     def __init__(self):
         self._event_ranges = [
             (Event.BAR, 0, 0),
-            (Event.QUARTER, 0, 0),
             (Event.TIME_SHIFT, 1, Encoding.MAX_SHIFT),
             (Event.NOTE_ON, Encoding.MIN_NOTE, Encoding.MAX_NOTE),
             (Event.NOTE_OFF, Encoding.MIN_NOTE, Encoding.MAX_NOTE),
@@ -88,17 +86,10 @@ class MIDIEncoder:
     def split_and_quantize(self, ns):
         return [
             quantize_note_sequence(i, self.steps_per_quarter)
-            for i in split_note_sequence_on_time_changes(ns)
+            for seq in split_note_sequence_on_silence(ns)
+            for i in split_note_sequence_on_time_changes(seq)
             if len(i.notes) > 16
         ]
-
-
-class DummyNote:
-    def __init__(self, step, pitch, event):
-        self.quantized_start_step = step
-        self.pitch = pitch
-        self.event = event
-        self.is_drum = False
 
 
 class MIDIMetricEncoder(MIDIEncoder):
@@ -139,30 +130,26 @@ class MIDIMetricEncoder(MIDIEncoder):
         notes = list(ns.notes)
         last_step = max(note.quantized_start_step for note in ns.notes)
         bars = []
-        quarters = []
-
-        for i in range(0, last_step, int(steps_per_bar_in_quantized_sequence(ns))):
-            bars.append((i, -1, 0))
-
-        for i in range(0, last_step, self.steps_per_quarter):
-            quarters.append((i, -1, 1))
+        steps_per_bar = int(steps_per_bar_in_quantized_sequence(ns))
+        for i in range(0, last_step, steps_per_bar):
+            bars.append((i, -1, Event.BAR))
 
         sorted_notes = sorted(
             notes, key=lambda note: (note.quantized_start_step, note.pitch))
 
         # Sort all note start and end events.
         onsets = [
-            (note.quantized_start_step, idx, 2)
+            (note.quantized_start_step, idx, Event.NOTE_ON)
             for idx, note in enumerate(sorted_notes)
         ]
         offsets = [
-            (note.quantized_end_step, idx, 3)
+            (note.quantized_end_step, idx, Event.NOTE_OFF)
             for idx, note in enumerate(sorted_notes)
         ]
-        note_events = sorted(bars + quarters + onsets + offsets)
+        note_events = sorted(bars + onsets + offsets)
         current_step = 0
         events = []
-        for step, idx, kind in note_events:
+        for step, idx, event_type in note_events:
             if step > current_step:
                 while step > current_step + Encoding.MAX_SHIFT:
                     events.append(Event(Event.TIME_SHIFT, Encoding.MAX_SHIFT))
@@ -172,14 +159,8 @@ class MIDIMetricEncoder(MIDIEncoder):
                 current_step = step
             note = sorted_notes[idx]
             if note.instrument in instruments:
-                if kind == 0:
-                    events.append(Event(Event.BAR))
-                elif kind == 1:
-                    events.append(Event(Event.QUARTER))
-                elif kind == 2:
-                    events.append(Event(Event.NOTE_ON, note.pitch))
-                elif kind == 3:
-                    events.append(Event(Event.NOTE_OFF, note.pitch))
+                value = 0 if event_type == Event.BAR else note.pitch
+                events.append(Event(event_type, value))
 
         ids = [self.token_sos] + [
             self.encoding.encode_event(event) + self.num_reserved_ids

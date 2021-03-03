@@ -46,10 +46,9 @@ class TransformerModel(nn.Module):
             d_model=d_model,
             nhead=nhead,
             num_encoder_layers=num_layers,
-            num_decoder_layers=0,
+            num_decoder_layers=num_layers,
             dropout=dropout,
             dim_feedforward=dim_feedforward,
-            custom_decoder=DummyDecoder()
         )
         self.decoder = nn.Linear(d_model, vocab_size)
         self.init_weights()
@@ -73,6 +72,14 @@ class TransformerModel(nn.Module):
         out = out.permute(1, 0, 2)  # (batch_size, max_seq, d_model)
         out = self.decoder(out)
         return out
+
+
+class DummyEncoder(nn.Module):
+    def __init__(self):
+        super(DummyEncoder, self).__init__()
+
+    def forward(self, src, *args, **kwargs):
+        return src
 
 
 class DummyDecoder(nn.Module):
