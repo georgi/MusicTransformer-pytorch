@@ -46,9 +46,10 @@ class TransformerModel(nn.Module):
             d_model=d_model,
             nhead=nhead,
             num_encoder_layers=num_layers,
-            num_decoder_layers=num_layers,
+            num_decoder_layers=0,
             dropout=dropout,
             dim_feedforward=dim_feedforward,
+            custom_decoder=DummyDecoder()
         )
         self.decoder = nn.Linear(d_model, vocab_size)
         self.init_weights()
