@@ -67,7 +67,7 @@ class TransformerModel(nn.Module):
         src = self.embedding(src) * math.sqrt(self.d_model)
         src = src.permute(1, 0, 2)  # (max_seq, batch_size, d_model)
         src = self.pos_encoder(src)
-        out = self.transformer_encoder(src=src, src_mask=mask)
+        out = self.transformer_encoder(src, mask)
         out = out.permute(1, 0, 2)  # (batch_size, max_seq, d_model)
         out = self.decoder(out)
         return out

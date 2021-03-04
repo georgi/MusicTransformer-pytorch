@@ -61,7 +61,7 @@ class Encoding:
 
     def encode_event(self, event):
         offset = 0
-        for event_type,  min_value, max_value in self._event_ranges:
+        for event_type, min_value, max_value in self._event_ranges:
             if event.event_type == event_type:
                 return offset + event.event_value - min_value
             offset += max_value - min_value + 1
@@ -108,7 +108,7 @@ class MIDIMetricEncoder(MIDIEncoder):
         self.token_sos = 1
         self.token_eos = 2
 
-    def encode_note_sequence(self, ns):
+    def encode_note_sequence_to_events(self, ns):
         assert(is_quantized_sequence(ns))
 
         pitch_by_instr = defaultdict(list)
@@ -141,12 +141,15 @@ class MIDIMetricEncoder(MIDIEncoder):
         onsets = [
             (note.quantized_start_step, idx, Event.NOTE_ON)
             for idx, note in enumerate(sorted_notes)
+            if note.instrument in instruments
         ]
         offsets = [
             (note.quantized_end_step, idx, Event.NOTE_OFF)
             for idx, note in enumerate(sorted_notes)
+            if note.instrument in instruments
         ]
         note_events = sorted(bars + onsets + offsets)
+
         current_step = 0
         events = []
         for step, idx, event_type in note_events:
@@ -158,9 +161,14 @@ class MIDIMetricEncoder(MIDIEncoder):
                     Event(Event.TIME_SHIFT, int(step - current_step)))
                 current_step = step
             note = sorted_notes[idx]
-            if note.instrument in instruments:
-                value = 0 if event_type == Event.BAR else note.pitch
-                events.append(Event(event_type, value))
+            if event_type == Event.BAR:
+                events.append(Event(Event.BAR))
+            else:
+                events.append(Event(event_type, note.pitch))
+        return events
+
+    def encode_note_sequence(self, ns):
+        events = self.encode_note_sequence_to_events(ns)
 
         ids = [self.token_sos] + [
             self.encoding.encode_event(event) + self.num_reserved_ids
@@ -304,3 +312,4 @@ if __name__ == '__main__':
             ids = midi_encoder.encode_note_sequence(ns[0])
             out = midi_encoder.decode_ids(ids)
             note_sequence_to_midi_file(out, os.path.join('out', f))
+
