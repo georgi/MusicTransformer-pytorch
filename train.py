@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 from torch.utils.tensorboard import SummaryWriter
-from tqdm.notebook import tqdm
+from tqdm import tqdm
 from custom.criterion import smooth_cross_entropy
 from torch_lr_finder import LRFinder
 from torch.optim.lr_scheduler import OneCycleLR
@@ -98,8 +98,10 @@ class Trainer:
                 mt.train()
                 for batch_x, batch_y in self.train_loader:
                     self.optimizer.zero_grad()
-                    output = mt(batch_x.to(self.device))
-                    loss = train_criterion(output, batch_y.to(self.device))
+                    input_ids = batch_x.to(self.device)
+                    output = mt(input_ids, labels=input_ids)
+                    loss = output.losses.mean()
+                    # loss = train_criterion(output, batch_y.to(self.device))
                     loss.backward()
                     # torch.nn.utils.clip_grad_norm_(mt.parameters(), 0.5)
                     self.optimizer.step()
@@ -109,9 +111,10 @@ class Trainer:
                 with torch.no_grad():
                     mt.eval()
                     for batch_x, batch_y in self.valid_loader:
-                        output = mt(batch_x.to(self.device))
-                        loss = eval_criterion(output, batch_y.to(self.device))
-                        eval_loss.append(loss.item())
+                        input_ids = batch_x.to(self.device)
+                        output = mt(input_ids, labels=input_ids)
+                        # loss = eval_criterion(output, batch_y.to(self.device))
+                        eval_loss.append(output.losses.mean().item())
                 pbar.set_description(
                     f"[{e}] "
                     f"loss={np.mean(train_loss):.2f} "
@@ -127,3 +130,4 @@ class Trainer:
                 self.summary.flush()
                 if e % self.save_every == 0:
                     self.save_checkpoint()
+        self.save_checkpoint()

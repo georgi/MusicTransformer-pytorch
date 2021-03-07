@@ -11,7 +11,7 @@ from note_seq.sequences_lib import (
 from note_seq.protobuf import music_pb2
 from utils import find_files_by_extensions
 from concurrent.futures import ProcessPoolExecutor
-from tqdm.notebook import tqdm
+from tqdm import tqdm
 
 
 def process_midi(seq, max_seq, token_pad):

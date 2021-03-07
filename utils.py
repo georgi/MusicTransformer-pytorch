@@ -25,7 +25,7 @@ def sample(model, sample_length, prime_sequence, device, top_p, top_k=10):
     input_tensor = torch.LongTensor(input_sequence).unsqueeze(0).to(device)
 
     for i in tqdm(range(sample_length)):
-        logits = model(input_tensor)[0, -1, :]
+        logits = model(input_tensor).logits[0, -1, :]
         probs = F.softmax(logits, dim=-1)
         sorted_probs, sorted_indices = torch.sort(probs, descending=True)
         to_remove = torch.cumsum(sorted_probs, dim=-1) > top_p
